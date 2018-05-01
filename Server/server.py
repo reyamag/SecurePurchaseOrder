@@ -2,22 +2,22 @@ from __future__ import print_function
 import socket
 import subprocess
 import sys
-import pickle  # for sending lists
+import threading
 
 
 # Server-wide variables
 bufferSize = 4096
 request_queue = 10
-serverName = 'localhost'
-codingMethod = 'UTF-8'
-serverSource = 'server.py'
+serverName = "localhost"
+codingMethod = "UTF-8"
+GLOBAL_threads = []
 
 # Create a buffer that receives a specified number of bytes over
 # a specified TCP socket
 def recvAll(sock, numBytes):
 
     # The buffer
-    recvBuff = ''
+    recvBuff = ""
 
     # Keep receiving till all is received
     while len(recvBuff) < numBytes:
@@ -38,20 +38,20 @@ def recvAll(sock, numBytes):
 # Function to connect to a temporary client socket
 def connectTempSocket(client):
 
-    # Create a temporary socket from which to find a 'random' port number
+    # Create a temporary socket from which to find a "random" port number
     # for an ephemeral data port
     tempSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     # Bind the socket to port 0
     try:
-        tempSocket.bind(('', 0))
+        tempSocket.bind(("", 0))
     except socket.error as msg:
-        print('Bind failed. Error Code :', str(msg))
+        print("Bind failed. Error Code :", str(msg))
         return None
 
     # Let the ephemeral port number be the ID of the temporary socket
     tempPortNum = tempSocket.getsockname()[1]
-    print('Ephemeral port # is', tempPortNum)
+    print("Ephemeral port # is", tempPortNum)
 
     # Send tempPortNum to client
     client.send(str(tempPortNum).encode(codingMethod))
@@ -67,86 +67,92 @@ def connectTempSocket(client):
     
     return tempCliSock
 
+def getFirstAvailableThreadID():
 
-# Function to accept a file from client
-def receiveFileFromClient(fileName, tempSocket):
+    ctr = 1
 
-    # Receive the first 10 bytes indicating the
-    # size of the file
-    fileSizeBuff = recvAll(tempSocket, 10)
+    for ID in GLOBAL_threads:
+        if ctr != ID:
+            return ctr # We found a missing threadID. Use that one!
+        ctr += 1
+    
+    # Every threadID from 1 -> n is used. Use n + 1
+    return GLOBAL_threads[len(GLOBAL_threads)-1] + 1
 
-    # Get the file size
-    if fileSizeBuff == '':
-        print('Nothing received.')
-        return 0
-    else:
-        fileSize = int(fileSizeBuff)
+# Thread stopping code used from:
+#   https://stackoverflow.com/questions/323972/is-there-any-way-to-kill-a-thread-in-python
+#   (Answer by "Phillipe F."")
+# serverThread class source used from:
+#   https://www.tutorialspoint.com/python/python_multithreading.htm
+class serverThread(threading.Thread):
+    def __init__(self, threadID, name, counter, sSocket, sPort, cSocket, _addr):   
+        # Create thread & prepare for eventual termination.
+        threading.Thread.__init__(self)
+        self._stop_event = threading.Event()
 
-    print('The file size is', fileSize, 'bytes')
+        # Initialze variables necessary for socket communication.
+        self.threadID = threadID
+        self.name = name
+        self.counter = counter
+        self.serverSocket = sSocket
+        self.serverPort = sPort
+        self.clientSocket = cSocket
+        self.addr = _addr
 
-    # Get the file data
-    fileData = recvAll(tempSocket, fileSize)
+    # Run the main thread process
+    def run(self):
+        print("Starting " + self.name)
+        mainClientProcess(self.name, self.serverSocket, self.serverPort, self.clientSocket, self.addr)
+        print("Exiting " + self.name)
+        self.stop() # Kill thread
+        GLOBAL_threads.remove(self.threadID)
 
-    # Open file to write to
-    fileWriter = open(fileName, 'w+')
+    # Methods to wait for thread to exit properly using join()
+    def stop(self):
+        self._stop_event.set()
 
-    # Write received data to file
-    fileWriter.write(fileData)
-
-    # Close the file
-    fileWriter.close()
+    def stopped(self):
+        return self._stop_event.is_set()
 
 
-# Function to send a file to the client
-def sendFileToClient(fileName, tempSocket):
+def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
+    # 1. Ensure correct client authentication...
+    authenticated = False
 
-    # Open file
-    try:
-        file_object = open(fileName, 'r')
-    except OSError:
-        print('Cannot open file:', fileName)
-        tempSocket.close()
-        return False
+    while not authenticated:
+        print("Waiting for authentication....")
+        clientUser = clientSocket.recv(bufferSize).decode(codingMethod)
+        clientPass = clientSocket.recv(bufferSize).decode(codingMethod)
 
-    print('Sending', fileName, 'to client')
-    while True:
-        # Read data
-        fileData = file_object.read()
+        # Authenicate user
+        print(clientUser, clientPass)
 
-        # Make sure file is not empty by reading only EOF
-        if fileData:
-
-            # Get the size of the data read
-            # and convert it to string
-            dataSize = str(len(fileData))
-
-            # Prepend 0's to the size string
-            # until the size is 10 bytes
-            while len(dataSize) < 10:
-                dataSize = '0' + dataSize
-
-            # Prepend the size of the data to the
-            # file data.
-            fileData = dataSize + fileData
-
-            # The number of bytes sent
-            numSent = 0
-
-            # Send the data!
-            while len(fileData) > numSent:
-                numSent += tempSocket.send(fileData[numSent:].encode(codingMethod))
-
-        # The file is completely empty
+        if clientPass == "abc":
+            print("Credentials match. Provide session ID")
+            # Send session ID
+            clientSocket.send("1234567".encode(codingMethod))
+            authenticated = True
         else:
+            print("Credentials do not match. Report failure")
+            # Failure.
+            clientSocket.send("-1".encode(codingMethod))
+
+    while True:
+        clientCommand = clientSocket.recv(bufferSize).decode(codingMethod)
+
+        if not clientCommand:
+            print("Client connection has unexpectedly terminated")
             break
 
-        print('Sent', numSent, 'bytes.')
+        if clientCommand == "test":
+            print("Testing works!")
+        elif clientCommand == "quit":
+            print("Quit command received. Closing socket now")
+            clientSocket.close()
+            break
+        else:
+            print("Not a valid command")
 
-    # Close the socket and the file
-    file_object.close()
-    tempSocket.close()
-
-    return True
 
 
 # *******************************************************************
@@ -157,152 +163,43 @@ def main():
     # if command line has 3 args. For ex: python server.py 1234
 
     if len(sys.argv) < 2:
-        print ('python3 ' + sys.argv[0] + '<port_number>')
+        print ("python3 " + sys.argv[0] + "<port_number>")
 
     serverPort = int(sys.argv[1])
 
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    print('Socket created')
+    print("Socket created")
 
     # bind socket to host and port
     try:
         serverSocket.bind((serverName, serverPort))
     except socket.error as msg:
-        print('Bind failed. Error Code:', str(msg))
+        print("Bind failed. Error Code:", str(msg))
 
         serverSocket.close()
         return
 
-    print('Socket bind complete')
+    print("Socket bind complete")
 
     serverSocket.listen(request_queue)
-    print('Socket now listening')
+    print("Socket now listening")
 
     # Listen forever
     while True:
-        print('\nAwaiting connection...')
+        print("\nAwaiting connection...")
 
         # Block until connection is received
         (clientSocket, addr) = serverSocket.accept()
-        print('Connected with client', addr, '@', serverPort)
+        print("Connected with client", addr, "@", serverPort, "\n")
 
-        # 1. Ensure correct client authentication...
-        authenticated = False
-
-        while not authenticated:
-            print("Waiting for authentication....")
-            clientUser = clientSocket.recv(bufferSize).decode(codingMethod)
-            clientPass = clientSocket.recv(bufferSize).decode(codingMethod)
-
-            # Authenicate user
-            print(clientUser, clientPass)
-
-            if clientPass == "abc":
-                print("Credentials match. Provide session ID")
-                # Send session ID
-                clientSocket.send('1234567'.encode(codingMethod))
-                authenticated = True
-            else:
-                print("Credentials do not match. Report failure")
-                # Failure.
-                clientSocket.send('-1'.encode(codingMethod))
-
-        while True:
-            clientCommand = clientSocket.recv(bufferSize).decode(codingMethod)
-
-            if not clientCommand:
-                print('Client connection has unexpectedly terminated')
-                break
-
-            # Argument counting using spaces
-            client_args = clientCommand.count(' ')
-
-            if client_args == 1:
-                (cmd, fileName) = clientCommand.split()
-            elif client_args == 0:
-                cmd = clientCommand
-
-            if cmd == 'put' and client_args == 1:
-
-                tempSock = connectTempSocket(clientSocket)
-
-                # Receive the file from client
-                print('Receive', fileName, 'from client...')
-                success = receiveFileFromClient(fileName, tempSock)
-
-                # Report success/failure to the client
-                if success == 0:
-                    print('Unable to receive', fileName)
-                    clientSocket.send('0'.encode(codingMethod))
-                else:
-                    print('Successfully received', fileName)
-                    clientSocket.send('1'.encode(codingMethod))
-
-                # Close the temporary data socket
-                tempSock.close()
-
-            elif cmd == 'get' and client_args == 1:
-                print('\nGet command received. Prepare to send', fileName)
-
-                tempSock = connectTempSocket(clientSocket)
-
-                print('Sending', fileName, 'to client')
-                success = sendFileToClient(fileName, tempSock)
-
-                if success:
-                    print('Successfully sent', fileName)
-                    # Receive success notification from client
-                    receipt = clientSocket.recv(1).decode(codingMethod)
-                    if receipt == '1':
-                        print('Client successfully received', fileName)
-                    else:
-                        print('Client unable to receive', fileName)
-                else:
-                    print('Unable to upload', fileName)
-
-                # Close the temporary data socket
-                tempSock.close()
-
-            elif cmd == 'quit':
-                print('Quit command received. Closing socket now')
-                clientSocket.close()
-                break
-
-            elif cmd == 'ls':
-                print('ls command received')
-
-                # Create ephemeral port and send to client
-                tempSock = connectTempSocket(clientSocket)
-
-                raw_data = []
-                dir_files = []
-
-                # Get raw directory data
-                for line in subprocess.getstatusoutput(cmd):
-                    raw_data.append(line)
-
-                # Format into list
-                dir_files = raw_data[1].split('\n')
-
-                # Remove server's source code from the returned list
-                index = 0
-                for file in dir_files:
-                    if file == serverSource:
-                        del dir_files[index]
-                    index += 1
-
-                # Need 'pickle.dumps' in order to send through socket
-                data = pickle.dumps(dir_files)
-
-                #send directory data back to client
-                tempSock.send(data)
-                print('Successfully sent directory data')
-
-                tempSock.close()
-
-            else:
-                print('Not a valid command')
+        # Create a unique thread for this connection and continue listening
+        thrID = 1 if len(GLOBAL_threads) == 0 else getFirstAvailableThreadID()
+        GLOBAL_threads.append(thrID)
+        GLOBAL_threads.sort()
+        thread = serverThread(thrID, "Thread-" + str(thrID), thrID, serverSocket, serverPort, clientSocket, addr)
+        thread.start()
+        
 
 
 if __name__ == "__main__":
