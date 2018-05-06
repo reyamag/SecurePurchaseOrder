@@ -3,6 +3,7 @@ import socket
 import sys
 import os.path
 import getpass
+from Crypto.Hash import SHA512
 
 bufferSize = 4096
 serverName = "localhost"
@@ -57,27 +58,32 @@ def main():
 	serverPort = int(sys.argv[2])
 
 	primarySocket = createSocket(serverPort)
-	authenticated = False
+	sessionID = -1
     
 	while True:
 		
 		# Perform initial authentication process
-		while not authenticated:
-			userInput = input("$> user: ")
-			passInput = getpass.getpass("$> password: ")
+		while sessionID == -1:
+			userInput = input("$> \nUsername: ")
+			passInput = getpass.getpass("$> \nPassword: ")
         
             # Hash password and send over TCP
 			primarySocket.send(userInput.encode(codingMethod))
 			primarySocket.send(passInput.encode(codingMethod))
 
-			# Receive session ID from server (-1 if incorrect credentials)
-
-			sessionID = primarySocket.recv(bufferSize).decode(codingMethod)
-			if sessionID == "-1":
-				print(idt, "Incorrect credentials. Try again")
+			# Receive session ID from server (0/1 for success/failure)
+			serverMsg = primarySocket.recv(bufferSize).decode(codingMethod)
+			parsedMsg = serverMsg.split('::')
+			
+			if str(parsedMsg[0]) == "1":
+				sessionID = int(parsedMsg[1])
+				print(idt, "Authentication successful. Session ID:", sessionID)
 			else:
-				print(idt, "Session ID:", sessionID)
-				authenticated = True
+				errorMsg = parsedMsg[1]
+				print(idt, errorMsg)
+				continue
+
+
 
 		ans = input("$> ")
 
@@ -93,6 +99,47 @@ def main():
 		if command == "test":
 			# Send the command to server
 			primarySocket.send(ans.encode(codingMethod))
+		elif command == "pwd":
+			# Update password
+
+			# 1. Send command to server.
+			primarySocket.send(ans.encode(codingMethod))
+
+			# 2. Prompt for current password
+			oldPassword = getpass.getpass("$> \nEnter old password: ")
+			oldPassword = SHA512.new(oldPassword.encode(codingMethod)).hexdigest()
+
+			# 3. Send to server for verification
+			storedPassword = primarySocket.send(oldPassword.encode(codingMethod))
+			passwordIsCorrect = primarySocket.recv(bufferSize).decode(codingMethod)
+
+			# 4. If password match, continue. Else, notify server that command is terminated
+			if passwordIsCorrect != "1":
+				print(idt, "Old password incorrect!")
+				continue
+			
+			toSendMsg = ""
+			
+			# Prompt for new password/confirmation.
+			newPassword1 = getpass.getpass("Enter new password: ")
+			newPassword2 = getpass.getpass("Confirm new password: ")
+			if newPassword1 != newPassword2:
+				print(idt, "New passwords do not match!")
+				toSendMsg = "0::"
+			else:
+				# Prepare to send server new password hash
+				toSendMsg = "1::" + SHA512.new(newPassword1.encode(codingMethod)).hexdigest()
+	
+			primarySocket.send(toSendMsg.encode(codingMethod))
+
+			# 5. Receive success msg if we attempted to update
+			if toSendMsg[0] == "1":
+				flag = primarySocket.recv(bufferSize).decode(codingMethod)
+				if str(flag) != "1":
+					print(idt, "Issue updating password")
+				else:
+					print(idt, "Password updated successfully!")
+
 		elif command == "quit":
 			print(idt, "Closing now")
 

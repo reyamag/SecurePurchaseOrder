@@ -3,7 +3,10 @@ import socket
 import subprocess
 import sys
 import threading
-
+import sqlite3
+from os.path import isfile
+from Crypto.Hash import SHA512
+import random
 
 # Server-wide variables
 bufferSize = 4096
@@ -114,28 +117,63 @@ class serverThread(threading.Thread):
     def stopped(self):
         return self._stop_event.is_set()
 
+def getSessionID():
+    return str(random.randrange(1, 999999999))
+
+def retrievePasswordHash(userName):
+
+    clientDatabase = sqlite3.connect(sys.argv[2])
+    cursor = clientDatabase.cursor()
+    sqlStr = "SELECT Password_Hash FROM clients WHERE Client_Name='{}'".format(userName)
+    result = cursor.execute(sqlStr).fetchone()
+
+    cursor.close()
+    clientDatabase.close()
+
+    return "-1" if result == None else result[0]
+
+def updatePassword(userName, newPassword):
+
+    result = False
+
+    clientDatabase = sqlite3.connect(sys.argv[2])
+    cursor = clientDatabase.cursor()
+    sqlStr = "UPDATE clients SET Password_Hash='{}' WHERE Client_Name='{}'".format(newPassword, userName)
+    print("SQL:", sqlStr)
+    cursor.execute(sqlStr)
+    clientDatabase.commit()
+    result = (cursor.rowcount == 1)
+    cursor.close()
+    clientDatabase.close()
+    
+    return result
+
 
 def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
     # 1. Ensure correct client authentication...
     authenticated = False
+    clientUserName = ""
 
     while not authenticated:
         print("Waiting for authentication....")
-        clientUser = clientSocket.recv(bufferSize).decode(codingMethod)
+        clientUserName = clientSocket.recv(bufferSize).decode(codingMethod)
         clientPass = clientSocket.recv(bufferSize).decode(codingMethod)
 
-        # Authenicate user
-        print(clientUser, clientPass)
+        # Hash input and compare to stored value for this client
+        correctHash = retrievePasswordHash(clientUserName)
+        enteredHash = SHA512.new(clientPass.encode(codingMethod)).hexdigest()
 
-        if clientPass == "abc":
-            print("Credentials match. Provide session ID")
-            # Send session ID
-            clientSocket.send("1234567".encode(codingMethod))
+        # Client Msg - "<Flag>::<Msg>", where <Msg> may be sessionID or ErrorMsg
+        if correctHash == enteredHash:
+            clientSocket.send(str("1::" + getSessionID()).encode(codingMethod))
             authenticated = True
+        elif correctHash == "-1":
+            clientSocket.send("0::User does not exist. Try again.".encode(codingMethod))
         else:
+            clientSocket.send("0::Password is invalid. Try again.".encode(codingMethod))
             print("Credentials do not match. Report failure")
-            # Failure.
-            clientSocket.send("-1".encode(codingMethod))
+    
+    print("User successfully authenticated. Wait for command.")
 
     while True:
         clientCommand = clientSocket.recv(bufferSize).decode(codingMethod)
@@ -146,6 +184,34 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
 
         if clientCommand == "test":
             print("Testing works!")
+        elif clientCommand == "pwd":
+            print("Client wants to update password")
+            # Update password protocol
+
+            # Receive current password from user, compare to database, and report success
+            passwordFromUser = clientSocket.recv(bufferSize).decode(codingMethod)
+
+            if passwordFromUser == retrievePasswordHash(clientUserName):
+                # Notify user old password is correct. Wait for furthur input.
+                clientSocket.send("1".encode(codingMethod))
+            else:
+                print("Passwords do not match")
+                clientSocket.send("0".encode(codingMethod))
+                continue # Wait for a new command since this one 'failed'
+
+            clientMsg = clientSocket.recv(bufferSize).decode(codingMethod)
+            parsedMsg = clientMsg.split("::")
+
+            if parsedMsg[0] == "1":
+                print("Updating password.")
+                if updatePassword(clientUserName, parsedMsg[1]):
+                    clientSocket.send("1".encode(codingMethod))
+                else:
+                    clientSocket.send("0".encode(codingMethod))
+                    print("Password update unsucessful. Report to client")
+            else:
+                print("Client terminated 'pwd' command")
+
         elif clientCommand == "quit":
             print("Quit command received. Closing socket now")
             clientSocket.close()
@@ -162,10 +228,15 @@ def main():
     # Normally obtained from command line arguments
     # if command line has 3 args. For ex: python server.py 1234
 
-    if len(sys.argv) < 2:
-        print ("python3 " + sys.argv[0] + "<port_number>")
+    if len(sys.argv) != 3:
+        print ("Incorrect number of arguments. See format:\n\tpython3 " + sys.argv[0] + " <port_number> <client_database>")
+        return
 
     serverPort = int(sys.argv[1])
+    
+    if sys.argv[2][-4:] != ".sl3" or not isfile(sys.argv[2]):
+        print("Please import a valid sqlite3 (.sl3 extension) database file")
+        return
 
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
