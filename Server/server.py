@@ -7,13 +7,24 @@ import sqlite3
 from os.path import isfile
 from Crypto.Hash import SHA512
 import random
+from signingFunctions import *
+import os
 
 # Server-wide variables
 bufferSize = 4096
 request_queue = 10
-serverName = "localhost"
+serverName = ""
 codingMethod = "UTF-8"
 GLOBAL_threads = []
+
+# Receive msg size before receving the message
+# over a limited-size buffer
+def recvMsg(sock):
+
+    size = int(sock.recv(4096).decode(codingMethod))
+
+    return recvAll(sock, size)
+
 
 # Create a buffer that receives a specified number of bytes over
 # a specified TCP socket
@@ -37,6 +48,21 @@ def recvAll(sock, numBytes):
 
     return recvBuff
 
+def sendMsg(sock, msg):
+
+    if len(msg.encode(codingMethod)) > bufferSize:
+        # User is trying to send a message that is greater than 2^bufferSize bytes.
+        print(idt, "The message you are sending is too large to send over this socket.")
+        return False
+
+    # Ensure size message is exactly the size of the buffer
+    size = str(len(msg.encode())).zfill(bufferSize)
+
+    # Send message size and then the actual message.
+    sock.send(size.encode(), bufferSize)
+    sock.send(msg.encode())
+
+    return True
 
 # Function to connect to a temporary client socket
 def connectTempSocket(client):
@@ -120,11 +146,16 @@ class serverThread(threading.Thread):
 def getSessionID():
     return str(random.randrange(1, 999999999))
 
+def getDBPath():
+    BASE_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
+    return os.path.join(BASE_DIR, sys.argv[3])
+
 def retrievePasswordHash(userName):
 
-    clientDatabase = sqlite3.connect(sys.argv[2])
+    clientDatabase = sqlite3.connect(getDBPath())
     cursor = clientDatabase.cursor()
     sqlStr = "SELECT Password_Hash FROM clients WHERE Client_Name='{}'".format(userName)
+    print("SQL:", sqlStr)
     result = cursor.execute(sqlStr).fetchone()
 
     cursor.close()
@@ -136,7 +167,7 @@ def updatePassword(userName, newPassword):
 
     result = False
 
-    clientDatabase = sqlite3.connect(sys.argv[2])
+    clientDatabase = sqlite3.connect(getDBPath())
     cursor = clientDatabase.cursor()
     sqlStr = "UPDATE clients SET Password_Hash='{}' WHERE Client_Name='{}'".format(newPassword, userName)
     print("SQL:", sqlStr)
@@ -150,14 +181,15 @@ def updatePassword(userName, newPassword):
 
 
 def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
+
     # 1. Ensure correct client authentication...
     authenticated = False
     clientUserName = ""
 
     while not authenticated:
         print("Waiting for authentication....")
-        clientUserName = clientSocket.recv(bufferSize).decode(codingMethod)
-        clientPass = clientSocket.recv(bufferSize).decode(codingMethod)
+        clientUserName = recvMsg(clientSocket)
+        clientPass = recvMsg(clientSocket)
 
         # Hash input and compare to stored value for this client
         correctHash = retrievePasswordHash(clientUserName)
@@ -165,49 +197,53 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
 
         # Client Msg - "<Flag>::<Msg>", where <Msg> may be sessionID or ErrorMsg
         if correctHash == enteredHash:
-            clientSocket.send(str("1::" + getSessionID()).encode(codingMethod))
+            sendMsg(clientSocket, str("1::" + getSessionID()))
             authenticated = True
         elif correctHash == "-1":
-            clientSocket.send("0::User does not exist. Try again.".encode(codingMethod))
+            sendMsg(clientSocket, "0::User does not exist. Try again.")
         else:
-            clientSocket.send("0::Password is invalid. Try again.".encode(codingMethod))
+            sendMsg(clientSocket, "0::Password is invalid. Try again.")
             print("Credentials do not match. Report failure")
     
     print("User successfully authenticated. Wait for command.")
 
     while True:
-        clientCommand = clientSocket.recv(bufferSize).decode(codingMethod)
+        clientCommand = recvMsg(clientSocket)
 
         if not clientCommand:
             print("Client connection has unexpectedly terminated")
             break
 
         if clientCommand == "test":
-            print("Testing works!")
+            msg = recvMsg(clientSocket)
+            print("Received test message from client")
+            sendMsg(clientSocket, "Test")
+            print("Sent test message to client")
+            print("Connection test successful")
+            
         elif clientCommand == "pwd":
             print("Client wants to update password")
-            # Update password protocol
 
             # Receive current password from user, compare to database, and report success
-            passwordFromUser = clientSocket.recv(bufferSize).decode(codingMethod)
+            passwordFromUser = recvMsg(clientSocket)
 
             if passwordFromUser == retrievePasswordHash(clientUserName):
                 # Notify user old password is correct. Wait for furthur input.
-                clientSocket.send("1".encode(codingMethod))
+                sendMsg(clientSocket, "1")
             else:
                 print("Passwords do not match")
-                clientSocket.send("0".encode(codingMethod))
+                sendMsg(clientSocket, "0")
                 continue # Wait for a new command since this one 'failed'
 
-            clientMsg = clientSocket.recv(bufferSize).decode(codingMethod)
+            clientMsg = recvMsg(clientSocket)
             parsedMsg = clientMsg.split("::")
 
             if parsedMsg[0] == "1":
                 print("Updating password.")
                 if updatePassword(clientUserName, parsedMsg[1]):
-                    clientSocket.send("1".encode(codingMethod))
+                    sendMsg(clientSocket, "1")
                 else:
-                    clientSocket.send("0".encode(codingMethod))
+                    sendMsg(clientSocket, "0")
                     print("Password update unsucessful. Report to client")
             else:
                 print("Client terminated 'pwd' command")
@@ -228,13 +264,14 @@ def main():
     # Normally obtained from command line arguments
     # if command line has 3 args. For ex: python server.py 1234
 
-    if len(sys.argv) != 3:
-        print ("Incorrect number of arguments. See format:\n\tpython3 " + sys.argv[0] + " <port_number> <client_database>")
+    if len(sys.argv) != 4:
+        print ("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> <client_database>")
         return
 
-    serverPort = int(sys.argv[1])
+    serverName = sys.argv[1]
+    serverPort = int(sys.argv[2])
     
-    if sys.argv[2][-4:] != ".sl3" or not isfile(sys.argv[2]):
+    if sys.argv[3][-4:] != ".sl3" or not isfile(sys.argv[3]):
         print("Please import a valid sqlite3 (.sl3 extension) database file")
         return
 
