@@ -28,7 +28,7 @@ Instructions Notes:<br>
           - The name of the server's IP address (use 'localhost' for testing on local machine)
           
      <PORT>:
-          - The port the server is listening on.<br>
+          - The port the server is listening on. <br>
           
      <CLIENT_DATA>:
           - The sqlite3 (.sql3) file that contains ID, name, Password Hashes, public-keys, and emails for clients
