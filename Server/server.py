@@ -1,4 +1,3 @@
-from __future__ import print_function
 import socket
 import subprocess
 import sys
@@ -8,7 +7,9 @@ from os.path import isfile
 from Crypto.Hash import SHA512
 import random
 from signingFunctions import *
+from socketFunctions import *
 import os
+import smtplib
 
 # Server-wide variables
 bufferSize = 4096
@@ -16,85 +17,8 @@ request_queue = 10
 serverName = ""
 codingMethod = "UTF-8"
 GLOBAL_threads = []
+TIMEOUT_WINDOW = 20 # 20 seconds
 
-# Receive msg size before receving the message
-# over a limited-size buffer
-def recvMsg(sock):
-
-    size = int(sock.recv(4096).decode(codingMethod))
-
-    return recvAll(sock, size)
-
-
-# Create a buffer that receives a specified number of bytes over
-# a specified TCP socket
-def recvAll(sock, numBytes):
-
-    # The buffer
-    recvBuff = ""
-
-    # Keep receiving till all is received
-    while len(recvBuff) < numBytes:
-
-        # Attempt to receive bytes
-        tmpBuff = sock.recv(numBytes).decode(codingMethod)
-
-        # The other side has closed the socket
-        if not tmpBuff:
-            break
-
-        # Add the received bytes to the buffer
-        recvBuff += tmpBuff
-
-    return recvBuff
-
-def sendMsg(sock, msg):
-
-    if len(msg.encode(codingMethod)) > bufferSize:
-        # User is trying to send a message that is greater than 2^bufferSize bytes.
-        print(idt, "The message you are sending is too large to send over this socket.")
-        return False
-
-    # Ensure size message is exactly the size of the buffer
-    size = str(len(msg.encode())).zfill(bufferSize)
-
-    # Send message size and then the actual message.
-    sock.send(size.encode(), bufferSize)
-    sock.send(msg.encode())
-
-    return True
-
-# Function to connect to a temporary client socket
-def connectTempSocket(client):
-
-    # Create a temporary socket from which to find a "random" port number
-    # for an ephemeral data port
-    tempSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    # Bind the socket to port 0
-    try:
-        tempSocket.bind(("", 0))
-    except socket.error as msg:
-        print("Bind failed. Error Code :", str(msg))
-        return None
-
-    # Let the ephemeral port number be the ID of the temporary socket
-    tempPortNum = tempSocket.getsockname()[1]
-    print("Ephemeral port # is", tempPortNum)
-
-    # Send tempPortNum to client
-    client.send(str(tempPortNum).encode(codingMethod))
-
-    # Listen on tempSocket - allow only one connection
-    tempSocket.listen(1)
-
-    # Accept incoming connections to tempCliSock
-    (tempCliSock, addr) = tempSocket.accept()
-
-    # Close listening tempSocket
-    tempSocket.close()
-    
-    return tempCliSock
 
 def getFirstAvailableThreadID():
 
@@ -108,12 +32,16 @@ def getFirstAvailableThreadID():
     # Every threadID from 1 -> n is used. Use n + 1
     return GLOBAL_threads[len(GLOBAL_threads)-1] + 1
 
+
 # Thread stopping code used from:
 #   https://stackoverflow.com/questions/323972/is-there-any-way-to-kill-a-thread-in-python
 #   (Answer by "Phillipe F."")
 # serverThread class source used from:
 #   https://www.tutorialspoint.com/python/python_multithreading.htm
 class serverThread(threading.Thread):
+
+    __slots__ = ["threadID", "name", "counter", "serverSocket", "serverPort", "clientSocket", "addr"]
+
     def __init__(self, threadID, name, counter, sSocket, sPort, cSocket, _addr):   
         # Create thread & prepare for eventual termination.
         threading.Thread.__init__(self)
@@ -143,23 +71,19 @@ class serverThread(threading.Thread):
     def stopped(self):
         return self._stop_event.is_set()
 
-def getSessionID():
-    return str(random.randrange(1, 999999999))
-
-def getDBPath():
+def getDBPath(db_file):
     BASE_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
-    return os.path.join(BASE_DIR, sys.argv[3])
+    return os.path.join(BASE_DIR, db_file)
 
 def retrievePasswordHash(userName):
 
-    clientDatabase = sqlite3.connect(getDBPath())
-    cursor = clientDatabase.cursor()
+    clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
+    cursor = clientDB.cursor()
     sqlStr = "SELECT Password_Hash FROM clients WHERE Client_Name='{}'".format(userName)
-    print("SQL:", sqlStr)
     result = cursor.execute(sqlStr).fetchone()
 
     cursor.close()
-    clientDatabase.close()
+    clientDB.close()
 
     return "-1" if result == None else result[0]
 
@@ -167,17 +91,95 @@ def updatePassword(userName, newPassword):
 
     result = False
 
-    clientDatabase = sqlite3.connect(getDBPath())
-    cursor = clientDatabase.cursor()
+    clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
+    cursor = clientDB.cursor()
     sqlStr = "UPDATE clients SET Password_Hash='{}' WHERE Client_Name='{}'".format(newPassword, userName)
-    print("SQL:", sqlStr)
     cursor.execute(sqlStr)
-    clientDatabase.commit()
+    clientDB.commit()
     result = (cursor.rowcount == 1)
     cursor.close()
-    clientDatabase.close()
+    clientDB.close()
     
     return result
+
+def updateInventory(item, amountOrdered):
+    
+    currentStock = getItemStock(item)
+
+    inventoryDB = sqlite3.connect(getDBPath(sys.argv[4]))
+    cursor = inventoryDB.cursor()
+    sqlStr = "UPDATE inventory SET InStock={} WHERE ItemDescription='{}'".format(currentStock-amountOrdered, item)
+    cursor.execute(sqlStr)
+    inventoryDB.commit()
+    cursor.close()
+    inventoryDB.close()
+
+    return
+
+def getItemStock(item):
+
+    inventoryDB = sqlite3.connect(getDBPath(sys.argv[4]))
+    cursor = inventoryDB.cursor()
+    sqlStr = "SELECT InStock FROM Inventory WHERE ItemDescription='{}'".format(item)
+    result = cursor.execute(sqlStr).fetchone()
+
+    cursor.close()
+    inventoryDB.close()
+
+    return -1 if result == None else result[0]
+
+def getUserEmail(userName):
+
+    clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
+    cursor = clientDB.cursor()
+    sqlStr = "SELECT Email FROM clients WHERE Client_Name='{}'".format(userName)
+    result = cursor.execute(sqlStr).fetchone()
+
+    cursor.close()
+    clientDB.close()
+
+    return result[0]
+
+# Function source largly used from online example:
+# https://stackoverflow.com/questions/17332384/python-3-send-email-smtp-gmail-error-smtpexception
+def sendMail(order, email_TO, recipientName, password):
+
+    SUBJECT = "Order Confirmation from"
+    TEXT = str("Hi " + recipientName + 
+            "\nYour order for " + str(order._quantity) + " " + 
+            str(order._description) + str("'s" if (order._quantity > 1) else "") +
+            " has been successfully processed and is on it's way." + 
+            "\n\nHave a wonderful day!"
+            "\n\n\n(This message was sent to you by " + str(sys.argv[1]) + 
+            " using Python3.6)")
+
+    # Gmail Sign In
+    gmail_sender = 'OrderConfirmation.cpsc452.sp18@gmail.com'
+
+    server = smtplib.SMTP('smtp.gmail.com', 587)
+    server.ehlo()
+    server.starttls()
+    try:
+        server.login(gmail_sender, password)
+    except:
+        server.quit()
+        print("Invalid credentials")
+        return False
+
+    BODY = '\r\n'.join(['To: %s' % email_TO,
+                        'From: %s' % gmail_sender,
+                        'Subject: %s' % SUBJECT,
+                        '', TEXT])
+    retVal = False
+    try:
+        server.sendmail(gmail_sender, [email_TO], BODY)
+        print("Email sent successfully")
+        retVal = True
+    except:
+        print("Issue sending email")
+
+    server.quit()
+    return retVal
 
 
 def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
@@ -185,6 +187,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
     # 1. Ensure correct client authentication...
     authenticated = False
     clientUserName = ""
+    emailEnabled = (len(sys.argv) == 6) # Server was started with the email password
 
     while not authenticated:
         print("Waiting for authentication....")
@@ -195,9 +198,9 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
         correctHash = retrievePasswordHash(clientUserName)
         enteredHash = SHA512.new(clientPass.encode(codingMethod)).hexdigest()
 
-        # Client Msg - "<Flag>::<Msg>", where <Msg> may be sessionID or ErrorMsg
+        # Client Msg - "<Flag>::<Msg>", where <Msg> may be nothing or ErrorMsg
         if correctHash == enteredHash:
-            sendMsg(clientSocket, str("1::" + getSessionID()))
+            sendMsg(clientSocket, str("1"))
             authenticated = True
         elif correctHash == "-1":
             sendMsg(clientSocket, "0::User does not exist. Try again.")
@@ -215,13 +218,26 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             break
 
         if clientCommand == "test":
+            # test protocol...
+            # Receive test message from client
+            # Send test message to client
+            # Wait for another command.
+
             msg = recvMsg(clientSocket)
             print("Received test message from client")
             sendMsg(clientSocket, "Test")
             print("Sent test message to client")
             print("Connection test successful")
-            
+
         elif clientCommand == "pwd":
+            # pwd protocol...
+            # Receives old password message from user
+            # Sends password verfication message to user
+            #   If verification failed, wait for another command.
+            # Recieve new password message from user
+            #   If message has 0 flag at msg start, wait for another command.
+            # Send update success message to user
+
             print("Client wants to update password")
 
             # Receive current password from user, compare to database, and report success
@@ -248,7 +264,69 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             else:
                 print("Client terminated 'pwd' command")
 
+        elif clientCommand == "order":
+            # Order protocol...
+            # Receives order message from client
+            # Sends response message to client
+            #   Response contains success 1\0 flag at beginning of message
+
+            print("Client wants to order")
+            clientOrder = recvMsg(clientSocket)
+            
+            ##################################################################
+            ##################################################################
+            ###############################TODO###############################
+            ##################################################################
+            ##################################################################
+            # Need to verify signature and hash and whatnot from this message.
+            # Implement simple protocol to ensure everything checks out.
+            # Signature needs to be verified from the client database
+            # TODO
+            # TODO
+            # TODO
+            # TODO
+            ##################################################################
+            ##################################################################
+            ##################################################################
+            ##################################################################
+            ##################################################################
+
+            # Since the digital signature was legitamite, create order
+            order = Order(initString=clientOrder)
+
+            # Confirm order has a fresh timestamp.
+            if datetime.utcnow().timestamp() - order._timeOrdered > TIMEOUT_WINDOW:
+                sendMsg(clientSocket, "0::Order timeout. Please resubmit")
+                continue
+            
+            # Confirm product availability
+            available = getItemStock(order._description)
+            if available == -1:
+                sendMsg(clientSocket, "0::Item does not exist in inventory")
+                continue
+            elif available - order._quantity < 0:
+                sendMsg(clientSocket, ("0::Order exceeds available inventory. " + 
+                                        "Please modify or redo your order."))
+                continue
+
+            # Update the inventory to reflect the transaction.
+            updateInventory(order._description, order._quantity)
+            successMsg = "1::Order processed successfully."
+            
+            # If server was started without an email password, do not send email
+            if emailEnabled and sendMail(order, getUserEmail(clientUserName), clientUserName, sys.argv[5]):
+                successMsg += ("\n     Email confirmation sent successfully to: " +
+                                str(getUserEmail(clientUserName)))
+            else:
+                successMsg += "\n     However, email confirmation was unable to be sent"
+
+            sendMsg(clientSocket, successMsg)
+            
         elif clientCommand == "quit":
+            # Quit protocol...
+            # No messages to send/receive
+            # Close connection with client and exit
+
             print("Quit command received. Closing socket now")
             clientSocket.close()
             break
@@ -261,18 +339,20 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
 #                             MAIN PROGRAM
 # *******************************************************************
 def main():
-    # Normally obtained from command line arguments
-    # if command line has 3 args. For ex: python server.py 1234
 
-    if len(sys.argv) != 4:
-        print ("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> <client_database>")
+    if len(sys.argv) < 5 or len(sys.argv) > 6:
+        print ("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> <client_data> <inventory_dat> <email_password>")
         return
 
     serverName = sys.argv[1]
     serverPort = int(sys.argv[2])
     
     if sys.argv[3][-4:] != ".sl3" or not isfile(sys.argv[3]):
-        print("Please import a valid sqlite3 (.sl3 extension) database file")
+        print("Please import a valid sqlite3 (.sl3 extension) database file for clients")
+        return
+
+    if sys.argv[4][-4:] != ".sl3" or not isfile(sys.argv[4]):
+        print("Please import a valid sqlite3 (.sl3 extension) database file for inventory")
         return
 
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

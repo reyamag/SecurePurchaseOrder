@@ -4,6 +4,7 @@ import sys
 import os.path
 import getpass
 from Crypto.Hash import SHA512
+from signingFunctions import *
 
 bufferSize = 4096
 serverName = ""
@@ -85,26 +86,28 @@ def main():
 
     primarySocket = createSocket(serverPort)
 
-    sessionID = -1
+    authenticated = False
+    userName = ""
 
     while True:
 		
         # Perform initial authentication process
-        while sessionID == -1:
-            userInput = input("$> \nUsername: ")
-            passInput = getpass.getpass("$> \nPassword: ")
+        while not authenticated:
+            userInput = input("Username: ")
+            userName = userInput
+            passInput = getpass.getpass("Password: ")
 
             # Hash password and send over TCP
             sendMsg(primarySocket, userInput)
             sendMsg(primarySocket, passInput)
 
-            # Receive session ID from server (0/1 for success/failure)
+            # Receive authentication success/failure from server
             serverMsg = recvMsg(primarySocket)
             parsedMsg = serverMsg.split('::')
 
             if str(parsedMsg[0]) == "1":
-                sessionID = int(parsedMsg[1])
-                print(idt, "Authentication successful. Session ID:", sessionID)
+                authenticated = True
+                print(idt, "Authentication successful.")
             else:
                 errorMsg = parsedMsg[1]
                 print(idt, errorMsg)
@@ -126,7 +129,7 @@ def main():
         # Process input
         if command == "test":
             
-            sendMsg(primarySocket, "Test")
+            sendMsg(primarySocket, "test")
             print(idt, "Sent test message to server")
             recvMsg(primarySocket)
             print(idt, "Received test message from server")
@@ -136,7 +139,7 @@ def main():
             # Update password
 
             # 1. Prompt for current password
-            oldPassword = getpass.getpass("$> \nEnter old password: ")
+            oldPassword = getpass.getpass("Enter old password: ")
             oldPassword = SHA512.new(oldPassword.encode(codingMethod)).hexdigest()
 
             # 2. Send to server for verification
@@ -166,10 +169,51 @@ def main():
             # 5. Receive success msg if we attempted to update
             if toSendMsg[0] == "1":
                 flag = recvMsg(primarySocket)
-            if str(flag) != "1":
-                print(idt, "Issue updating password")
-            else:
-                print(idt, "Password updated successfully!")
+
+                if str(flag) != "1":
+                    print(idt, "Issue updating password")
+                else:
+                    print(idt, "Password updated successfully!")
+
+        elif command == "order":
+            # Order protocol...
+            # Get order information from the user
+            # Send the order message to server
+            # Receive order success/failure message from server
+            
+            orderDesc = input("\nWhat do you want to order? ")
+            orderQty = int(input("How many? "))
+
+            theOrder = Order(initList=[orderDesc, orderQty, int(float(datetime.utcnow().timestamp())), userName])
+
+            ##################################################################
+            ##################################################################
+            ###############################TODO###############################
+            ##################################################################
+            ##################################################################
+            # Need to sign the message and hash and whatnot.
+            # Implement simple protocol to ensure everything checks out.
+            # TODO
+            # TODO
+            myOrder = str(theOrder) # TEMP: TODO - Sign and hash this!!!!!
+            # TODO
+            # TODO
+            ##################################################################
+            ##################################################################
+            ##################################################################
+            ##################################################################
+            ##################################################################
+
+            sendMsg(primarySocket, myOrder)
+            print(idt, "Sent order for", orderQty, "" + str(orderDesc) + str("'s" if (orderQty > 1) else ""))
+
+            # Receive order confirmation/failure notice from server
+            serverMsg = recvMsg(primarySocket)
+            parsedMsg = serverMsg.split("::")
+            
+            print(idt, parsedMsg[1])
+
+        # TODO: Add command: update public key
 
         elif command == "quit":
             print(idt, "Closing now")
@@ -177,7 +221,7 @@ def main():
             primarySocket.close()
             break
         else:
-            print(idt, "Invalid command. Try: 'test' or 'quit'")
+            print(idt, "Invalid command. Try: 'test', 'order', 'pwd', or 'quit'")
 
 
 if __name__ == "__main__":
