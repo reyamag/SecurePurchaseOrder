@@ -31,10 +31,10 @@ Instructions Notes:<br>
           - The port the server is listening on.<br>
           
      <CLIENT_DATA>:
-          - The sqlite3 (.sql3) file that contains ID, name, Password Hashes, public-keys, and emails for clients<br>
+          - The sqlite3 (.sql3) file that contains ID, name, Password Hashes, public-keys, and emails for clients
           
      <INVENTORY_DATA>:
-          - The sqlite3 file that contains the producs the server has available to order<br>
+          - The sqlite3 file that contains the products the server has available to order
           
      <EMAIL_PASS>:
           - The gmail password for the emailer that the server uses to send email confirmations. 
@@ -56,9 +56,9 @@ Instructions Notes:<br>
           Tests the connection with the server
           
      pwd:
-          Changes the password
+          Changes the user's password
           
-     send_order:
+     order:
           Sends an order request to the server
           
      quit:
