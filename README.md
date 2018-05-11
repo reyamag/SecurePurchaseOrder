@@ -15,19 +15,40 @@ Ensure python3 support for sqlite3, Crypto, sockets, and threading.
 
 1: run `$make clean` and then `$make`
 
+This step is vitally important. Both the Client and Server subfolders use the exact same socket/signing functions, but to reduce file length and duplicate files, those functions were placed into header files, and those master header files reside in the main directory, NOT the subfolders. `$make clean` clears out the old copies from the subfolders and `$make` copies the master header files to the respective subfolders.
+
+**Failing to do this step will cause program failures**
+
 2: start the server:<br>
-     `$python3 server.py <PORT> <CLIENT_DATA>`
+     `$python3 server.py <SERVER_NAME> <PORT> <CLIENT_DATA> <INVENTORY_DATA> <EMAIL_PASS>`
   
-     Notes:<br>
-          <PORT>: the port the server is listening on.<br>
-          <CLIENT_DATA>: the sqlite3 (.sql3) file that contains ID, name, Password Hashes, public-keys, and emails for clients<br>
+Instructions Notes:<br>
+
+     <SERVER_NAME>:
+          - The name of the server's IP address (use 'localhost' for testing on local machine)
+          
+     <PORT>:
+          - The port the server is listening on.<br>
+          
+     <CLIENT_DATA>:
+          - The sqlite3 (.sql3) file that contains ID, name, Password Hashes, public-keys, and emails for clients<br>
+          
+     <INVENTORY_DATA>:
+          - The sqlite3 file that contains the producs the server has available to order<br>
+          
+     <EMAIL_PASS>:
+          - The gmail password for the emailer that the server uses to send email confirmations. 
+            Not providing this means the server will not send confirmation emails.
     
 3: Run various clients:<br>
      `$python3 client.py <SERVER_NAME> <PORT>`
-     
-     Notes:<br>
-          <SERVER_NAME>: the server's IP address (use 'localhost' for testing on local machine')
-          <PORT>: the port to connect to the server over
+
+Instructions Notes:<br>
+
+     <SERVER_NAME>:
+           - The server's IP address (use 'localhost' for testing on local machine)
+     <PORT>:
+           - The port to connect to the server over
 
 4: Perform commands:<br>
      
