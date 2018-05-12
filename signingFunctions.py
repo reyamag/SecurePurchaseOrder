@@ -1,4 +1,4 @@
-from Crypto.Cipher import DES 
+from Crypto import Random
 from Crypto.PublicKey import RSA 
 from Crypto.Signature import PKCS1_v1_5 
 from Crypto.Hash import SHA512
@@ -7,17 +7,18 @@ from datetime import datetime
 
 # Loads and returns the hash of some data
 # Data can be in file or directly passed
-def readAndHash(source, isFile):
+def readAndHash(order):
 
     contents = ""
 
     # Read the input file
-    if isFile:
-        inFile = open(fileName, 'r')
-        contents = inFile.read()
-        inFile.close()
-    else:
-        contents = source
+    #if isFile:
+   # inFile = open(fileName, 'r')
+   # contents = inFile.read()
+   # inFile.close()
+   # else:
+        #contents = source
+    contents = order
 
     # Compute SHA-512 hash on the contents
     return SHA512.new(contents.encode())
@@ -25,17 +26,14 @@ def readAndHash(source, isFile):
 
 # Loads an RSA key object from the location specified
 # Can be a file or directly passed
-def load_key(keyData, isFile):
+def load_key(keyData):
 
     rawKey = ""
 
-    if isFile:
-        rawKey = open(keyPath, 'r').read()
-    else:
-        rawKey = keyData
+    rawKey = keyData
 
-    decodedKey = b64decode(rawKey)
-    rsaKey = RSA.importKey(decodedKey)
+    #decodedKey = b64decode(rawKey)
+    rsaKey = RSA.importKey(rawKey)
 
     return rsaKey
 
@@ -90,17 +88,17 @@ def verifyFileSig(fileName, pubKey, signature):
     return verifySig(hashedContents, signature, pubKey)
 
 
-# Loads a signature from a data source.
+# Creates a signature from a data source.
 # Can be a file or data passed directly 
-def getFileSig(fileName, isFile, privKey):
+def getFileSig(order, privKey):
 
     # 1. Read the input file
     # 2. Compute an SHA-512 hash of the contents read
-    hashedContents = readAndHash(fileName, isFile)
+    hashedContents = readAndHash(order)
 
     # Creating the signature for the input file with the 
-    # hash using the digSig() function
-    return digSig(privKey, hashedContents)
+    # hash using the sign_data() function
+    return sign_data(privKey, hashedContents)
 
 # Arbitrary Design on what an 'Order' is.
 class Order:
