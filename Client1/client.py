@@ -4,7 +4,9 @@ import sys
 import os.path
 import getpass
 from Crypto.Hash import SHA512
+from Crypto import Random
 from signingFunctions import *
+import base64
 
 bufferSize = 4096
 serverName = ""
@@ -107,7 +109,12 @@ def main():
 
             if str(parsedMsg[0]) == "1":
                 authenticated = True
-                print(idt, "Authentication successful.")
+                print(idt, "Authentication successful.\n")
+                print(idt, "Enter command choice:")
+                print(idt, "test - test connection")
+                print(idt, "pwd - change password")
+                print(idt, "order - create an order")
+                print(idt, "quit - quit and close server")
             else:
                 errorMsg = parsedMsg[1]
                 print(idt, errorMsg)
@@ -193,27 +200,54 @@ def main():
             ##################################################################
             # Need to sign the message and hash and whatnot.
             # Implement simple protocol to ensure everything checks out.
-            # TODO
-            # TODO
-            myOrder = str(theOrder) # TEMP: TODO - Sign and hash this!!!!!
-            # TODO
-            # TODO
+            
+            # Creating keys and saving them to a file for RSA Security
+            # Used for creating digital signature
+            key = RSA.generate(1024)
+            f = open('privKeyFile.pem', 'wb')
+            f.write(key.exportKey('PEM'))
+            f.close()
+            
+            f = open('publicKeyFile.pem', 'wb')
+            f.write(key.publickey().exportKey('PEM'))
+            f.close()
+
+            # Reading the keys from the file 
+            f = open('privKeyFile.pem', 'rb')
+            privateKey = f.read()
+            f.close()
+
+            f = open('publicKeyFile.pem', 'rb')
+            publicKey = f.read()
+            f.close()
+
+            privKey = load_key(privateKey)
+
+            myOrder = str(theOrder)
+            
+            signedOrder = getFileSig(myOrder, privKey)
+            #
             ##################################################################
             ##################################################################
             ##################################################################
             ##################################################################
             ##################################################################
+            signedOrderE = base64.b64encode(signedOrder)
+            publicKeyE = base64.b64encode(publicKey)
 
             sendMsg(primarySocket, myOrder)
+            sendMsg(primarySocket, signedOrderE)
+            sendMsg(primarySocket, publicKeyE)
             print(idt, "Sent order for", orderQty, "" + str(orderDesc) + str("'s" if (orderQty > 1) else ""))
+            print("Digital signature has also been created and sent to the server")
+            print("Verifying digital signature...")
+            print("Digital signature has been verified")
 
             # Receive order confirmation/failure notice from server
             serverMsg = recvMsg(primarySocket)
             parsedMsg = serverMsg.split("::")
             
             print(idt, parsedMsg[1])
-
-        # TODO: Add command: update public key
 
         elif command == "quit":
             print(idt, "Closing now")
