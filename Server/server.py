@@ -272,6 +272,8 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
 
             print("Client wants to order")
             clientOrder = recvMsg(clientSocket)
+            clientSignature = recvMsg(clientSocket)
+            clientPubKey = recvMsg(clientSocket)
             
             ##################################################################
             ##################################################################
@@ -281,10 +283,20 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             # Need to verify signature and hash and whatnot from this message.
             # Implement simple protocol to ensure everything checks out.
             # Signature needs to be verified from the client database
-            # TODO
-            # TODO
-            # TODO
-            # TODO
+            # 
+            # Verifying the digital signature
+            print("Verifying the digital signature...")
+
+            pubKey = load_key(clientPubKey)
+            
+            result = verifyFieSig(clientOrder, pubKey, clientSignature)
+
+            if result == True:
+                print("Success! Signature has been verified")
+            elif result == False:
+                print("Error! Signature has not been verified")
+            # 
+            #
             ##################################################################
             ##################################################################
             ##################################################################
