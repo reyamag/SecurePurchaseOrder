@@ -61,6 +61,9 @@ Instructions Notes:<br>
      order:
           Sends an order request to the server
           
+     update public key:
+          Updates the RSA public key
+          
      quit:
           Terminates the connection
           
