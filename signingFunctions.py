@@ -1,4 +1,5 @@
 from Crypto import Random
+from Crypto.Cipher import AES
 from Crypto.PublicKey import RSA 
 from Crypto.Signature import PKCS1_v1_5 
 from Crypto.Hash import SHA512
@@ -7,25 +8,21 @@ from datetime import datetime
 
 # Loads and returns the hash of some data
 # Data can be in file or directly passed
-def readAndHash(order):
+def readAndHash(source, isFile):
 
     contents = ""
 
     # Read the input file
-    #if isFile:
-   # inFile = open(fileName, 'r')
-   # contents = inFile.read()
-   # inFile.close()
-   # else:
-        #contents = source
-    contents = order
+    if isFile:
+        inFile = open(fileName, 'r').read()
+    else:
+        contents = source
 
     # Compute SHA-512 hash on the contents
     return SHA512.new(contents.encode())
 
 
-# Loads an RSA key object from the location specified
-# Can be a file or directly passed
+# Loads an RSA key object
 def load_key(keyData):
 
     rawKey = ""
@@ -43,8 +40,9 @@ def sign_data(sigKey, data):
 
     signer = PKCS1_v1_5.new(sigKey) 
 
-    sign = signer.sign(data) 
-    return b64encode(sign)
+    signedData = signer.sign(data) 
+
+    return b64encode(signedData)
 
 
 # Saves the digital signature to a file
@@ -77,24 +75,20 @@ def verify_sign(hashData, sig, veriKey):
 
 
 # Verifies the signature of the file
-def verifyFileSig(fileName, pubKey, signature):
-	
-    # 1. Read the input file
-    # 2. Compute an SHA-512 hash of the contents read
-    hashedContents = readAndHash(fileName)
+def verifyFileSig(source, pubKey, signature, isFile):
 
-    # 3. Use the verifySig function you implemented in
-    # order to verify the file signature
-    return verifySig(hashedContents, signature, pubKey)
+    hashedContents = readAndHash(source, isFile)
+
+    return verify_sign(hashedContents, signature, pubKey)
 
 
 # Creates a signature from a data source.
 # Can be a file or data passed directly 
-def getFileSig(order, privKey):
+def getFileSig(source, privKey, isFile):
 
     # 1. Read the input file
     # 2. Compute an SHA-512 hash of the contents read
-    hashedContents = readAndHash(order)
+    hashedContents = readAndHash(source, isFile)
 
     # Creating the signature for the input file with the 
     # hash using the sign_data() function
@@ -127,3 +121,36 @@ class Order:
 
     def __str__(self):
         return self._description + "::" + str(self._quantity) + "::" + str(self._timeOrdered) + "::" + self._orderedBy
+
+# AES Block Encryption.
+# Class design used from: https://gist.github.com/crmccreary/5610068
+
+def pad(s):
+    BLOCK_SIZE = 16
+    return s + (BLOCK_SIZE - len(s) % BLOCK_SIZE) * chr(BLOCK_SIZE - len(s) % BLOCK_SIZE)
+
+def unpad(s):
+    return s[0:-ord(s[-1])]
+
+class AESCipher:
+
+    __slots__ = ['key', 'init_vector']
+
+    def __init__(self, key, iv):
+        self.key = key
+        self.init_vector = iv
+
+    def encrypt(self, plaintext):
+
+        plaintext = pad(plaintext) # Ensure padded data
+        cipher = AES.new(self.key, AES.MODE_ECB, self.init_vector)
+
+        return (self.init_vector + cipher.encrypt(plaintext))
+
+    def decrypt(self, ciphertext):
+
+        ciphertext = ciphertext
+        iv = ciphertext[:16]
+        ciphertext = ciphertext[16:]
+        cipher = AES.new(self.key, AES.MODE_ECB, self.init_vector)
+        return unpad(cipher.decrypt(ciphertext).decode())
