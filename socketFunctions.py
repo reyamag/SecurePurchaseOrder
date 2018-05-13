@@ -5,24 +5,25 @@ bufferSize = 4096
 
 # Receive msg size before receving the message
 # over a limited-size buffer
-def recvMsg(sock):
+def recvMsg(sock, decode=True):
 
     size = int(sock.recv(4096).decode(codingMethod))
-    return recvAll(sock, size)
+    return recvAll(sock, size, decode)
 
 
 # Create a buffer that receives a specified number of bytes over
-# a specified TCP socket
-def recvAll(sock, numBytes):
+# a specified TCP socket. Can receive as actual bytes or string
+def recvAll(sock, numBytes, decode):
 
-    # The buffer
-    recvBuff = ""
+    # The buffer (bytes or string depending on param)
+    recvBuff = "" if decode else b''
 
     # Keep receiving till all is received
     while len(recvBuff) < numBytes:
 
         # Attempt to receive bytes
-        tmpBuff = sock.recv(numBytes).decode(codingMethod)
+        tmp = sock.recv(numBytes)
+        tmpBuff = tmp.decode(codingMethod) if decode else tmp
 
         # The other side has closed the socket
         if not tmpBuff:
@@ -33,19 +34,19 @@ def recvAll(sock, numBytes):
 
     return recvBuff
 
-def sendMsg(sock, msg):
+def sendMsg(sock, msg, encode=True):
 
-    if len(msg.encode(codingMethod)) > bufferSize:
+    if len(msg.encode(codingMethod) if encode else msg) > bufferSize:
         # User is trying to send a message that is greater than 2^bufferSize bytes.
         print(idt, "The message you are sending is too large to send over this socket.")
         return False
 
     # Ensure size message is exactly the size of the buffer
-    size = str(len(msg.encode())).zfill(bufferSize)
+    size = str(len(msg.encode() if encode else msg)).zfill(bufferSize)
 
     # Send message size and then the actual message.
     sock.send(size.encode(), bufferSize)
-    sock.send(msg.encode())
+    sock.send(msg.encode() if encode else msg)
 
     return True
 
