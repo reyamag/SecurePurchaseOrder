@@ -4,62 +4,16 @@ import sys
 import os.path
 import getpass
 from Crypto.Hash import SHA512
+from Crypto.Cipher import AES
 from Crypto import Random
 from signingFunctions import *
+from socketFunctions import *
 import base64
 
 bufferSize = 4096
 serverName = ""
 codingMethod = "UTF-8"
 idt = "    "  # Indent so that client feedback looks clean
-
-
-# Receive msg size before receving the message
-# over a limited-size buffer
-def recvMsg(sock):
-
-    size = int(sock.recv(4096).decode(codingMethod))
-
-    return recvAll(sock, size)
-
-
-# Create a buffer that receives a specified number of bytes over
-# a specified TCP socket
-def recvAll(sock, numBytes):
-
-    # The buffer
-    recvBuff = ""
-
-    # Keep receiving till all is received
-    while len(recvBuff) < numBytes:
-
-        # Attempt to receive bytes
-        tmpBuff = sock.recv(numBytes).decode(codingMethod)
-
-        # The other side has closed the socket
-        if not tmpBuff:
-            break
-
-        # Add the received bytes to the buffer
-        recvBuff += tmpBuff
-
-    return recvBuff
-
-def sendMsg(sock, msg):
-
-    if len(msg.encode(codingMethod)) > bufferSize:
-        # User is trying to send a message that is greater than 2^bufferSize bytes.
-        print(idt, "The message you are sending is too large to send over this socket.")
-        return False
-
-    # Ensure size message is exactly the size of the buffer
-    size = str(len(msg.encode())).zfill(bufferSize)
-
-    # Send message size and then the actual message.
-    sock.send(size.encode(), bufferSize)
-    sock.send(msg.encode())
-
-    return True
 
 # Function to create a socket using a provided port # and server
 def createSocket(portNum):
@@ -78,13 +32,14 @@ def createSocket(portNum):
 #							MAIN PROGRAM
 # *******************************************************************
 def main():
-    # if client command line has 3 args. for ex: python client.py localhost 1234
-    if len(sys.argv) != 3:
-        print("\tUSAGE: $python3 " + sys.argv[0] + " <server_machine> " + " <server_port>")
+    # if client command line has 3 args. for ex: python client.py localhost 1234 privateKey.PEM
+    if len(sys.argv) != 4:
+        print("\tUSAGE: $python3 " + sys.argv[0] + " <server_machine> <server_port> <private_key_file>")
         return 
     
     serverName = sys.argv[1]
     serverPort = int(sys.argv[2])
+    privKeyFile = sys.argv[3]
 
     primarySocket = createSocket(serverPort)
 
@@ -114,6 +69,7 @@ def main():
                 print(idt, "test - test connection")
                 print(idt, "pwd - change password")
                 print(idt, "order - create an order")
+                print(idt, "inventory - search for an item in inventory")
                 print(idt, "quit - quit and close server")
             else:
                 errorMsg = parsedMsg[1]
@@ -126,7 +82,7 @@ def main():
         arg_count = ans.count(" ")
 
         if arg_count == 1:
-            print(idt, "Currently only 1 word commands...")
+            print(idt, "Invalid command. Try: 'test', 'order', 'inventory', 'pwd', or 'quit'")
         elif arg_count == 0:
             command = ans
 
@@ -135,8 +91,10 @@ def main():
 
         # Process input
         if command == "test":
-            
-            sendMsg(primarySocket, "test")
+
+            testMsg = "Hello Server :)"
+
+            sendMsg(primarySocket, testMsg)
             print(idt, "Sent test message to server")
             recvMsg(primarySocket)
             print(idt, "Received test message from server")
@@ -192,62 +150,46 @@ def main():
             orderQty = int(input("How many? "))
 
             theOrder = Order(initList=[orderDesc, orderQty, int(float(datetime.utcnow().timestamp())), userName])
-
-            ##################################################################
-            ##################################################################
-            ###############################TODO###############################
-            ##################################################################
-            ##################################################################
-            # Need to sign the message and hash and whatnot.
-            # Implement simple protocol to ensure everything checks out.
             
-            # Creating keys and saving them to a file for RSA Security
-            # Used for creating digital signature
-            key = RSA.generate(1024)
-            f = open('privKeyFile.pem', 'wb')
-            f.write(key.exportKey('PEM'))
-            f.close()
+            # Get the private key from the input parameters
+            privKey = load_key(load_sig(privKeyFile))
+
+            # Get the signature of the order
+            orderSignature = getFileSig(str(theOrder), privKey, isFile=False)
             
-            f = open('publicKeyFile.pem', 'wb')
-            f.write(key.publickey().exportKey('PEM'))
-            f.close()
+            # Now, encrypt the order itself
+            # First, generate an AES key and initialization vector for block-chain encryption.
+            aesKey = os.urandom(16) # 16 random bytes
+            iv = Random.new().read(AES.block_size) # Random IV
+            myEncryptor = AESCipher(aesKey, iv)
 
-            # Reading the keys from the file 
-            f = open('privKeyFile.pem', 'rb')
-            privateKey = f.read()
-            f.close()
+            # Second, generate the encrypted text.
+            encryptedOrder = myEncryptor.encrypt(str(theOrder))
 
-            f = open('publicKeyFile.pem', 'rb')
-            publicKey = f.read()
-            f.close()
+            # Send a sequence of messages in this order:
+            #   1. Digital signature
+            #   2. AES key
+            #   3. IV vector
+            #   4. Encrypted order
+            # Note: Messages 2-4 are byte-strings and cannot be encoded/decoded.
 
-            privKey = load_key(privateKey)
+            sendMsg(primarySocket, orderSignature, encode=False)
+            sendMsg(primarySocket, aesKey, encode=False)
+            sendMsg(primarySocket, iv, encode=False)
+            sendMsg(primarySocket, encryptedOrder, encode=False)
 
-            myOrder = str(theOrder)
-            
-            signedOrder = getFileSig(myOrder, privKey)
-            #
-            ##################################################################
-            ##################################################################
-            ##################################################################
-            ##################################################################
-            ##################################################################
-            signedOrderE = base64.b64encode(signedOrder)
-            publicKeyE = base64.b64encode(publicKey)
-
-            sendMsg(primarySocket, myOrder)
-            sendMsg(primarySocket, signedOrderE)
-            sendMsg(primarySocket, publicKeyE)
-            print(idt, "Sent order for", orderQty, "" + str(orderDesc) + str("'s" if (orderQty > 1) else ""))
-            print("Digital signature has also been created and sent to the server")
-            print("Verifying digital signature...")
-            print("Digital signature has been verified")
+            print("Order sent to server. Waiting for reply.....")
 
             # Receive order confirmation/failure notice from server
             serverMsg = recvMsg(primarySocket)
-            parsedMsg = serverMsg.split("::")
-            
-            print(idt, parsedMsg[1])
+            print(idt, serverMsg.split("::")[1])
+
+        elif command == "inventory":
+            item = input("Which item are you looking for? ")
+            sendMsg(primarySocket, item)
+
+            response = recvMsg(primarySocket)
+            print(idt, response.split("::")[1])
 
         elif command == "quit":
             print(idt, "Closing now")
@@ -255,7 +197,7 @@ def main():
             primarySocket.close()
             break
         else:
-            print(idt, "Invalid command. Try: 'test', 'order', 'pwd', or 'quit'")
+            print(idt, "Invalid command. Try: 'test', 'order', 'inventory', 'pwd', or 'quit'")
 
 
 if __name__ == "__main__":
