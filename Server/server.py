@@ -128,6 +128,29 @@ def getItemStock(item):
 
     return -1 if result == None else result[0]
 
+def getClientPubKey(userName):
+
+    clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
+    cursor = clientDB.cursor()
+    sqlStr = "SELECT Public_Key FROM clients WHERE Client_Name='{}'".format(userName)
+    result = cursor.execute(sqlStr).fetchone()
+
+    cursor.close()
+    clientDB.close()
+
+    if result == None:
+        return None
+    
+    keyRaw = result[0]
+    
+    return str("-----BEGIN PUBLIC KEY-----\n" + 
+                keyRaw[:64] + "\n" +
+                keyRaw[64:128] + "\n" +
+                keyRaw[128:192] + "\n" +
+                keyRaw[192:] + "\n" +
+                "-----END PUBLIC KEY-----")
+
+
 def getUserEmail(userName):
 
     clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
@@ -213,6 +236,8 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
     while True:
         clientCommand = recvMsg(clientSocket)
 
+        args = clientCommand.split(" ")
+
         if not clientCommand:
             print("Client connection has unexpectedly terminated")
             break
@@ -271,59 +296,57 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             #   Response contains success 1\0 flag at beginning of message
 
             print("Client wants to order")
-            clientOrder = recvMsg(clientSocket)
-            clientSignature = recvMsg(clientSocket)
-            clientPubKey = recvMsg(clientSocket)
+            print("Received:")
+            clientSignature = recvMsg(clientSocket, decode=False)
+            print("\tClient Signature")
+            aesKey = recvMsg(clientSocket, decode=False)
+            print("\tAES key")
+            iv = recvMsg(clientSocket, decode=False)
+            print("\tAES IV Vector")
+            encryptedMsg = recvMsg(clientSocket, decode=False)
+            print("\tEncrypted message")
+
+            # 1. Decrypt the message using the AES key and IV vector.
+            myDecryptor = AESCipher(aesKey, iv)
+            plaintext_Order = myDecryptor.decrypt(encryptedMsg)
+
+            # 2. Generate the hash of the data sent.
+            hash_plaintext_Order = readAndHash(plaintext_Order, isFile=False)
+
+            print("Verifying signature with public key against hash...")
+            clientsPubKey = load_key(getClientPubKey(clientUserName))
             
-            ##################################################################
-            ##################################################################
-            ###############################TODO###############################
-            ##################################################################
-            ##################################################################
-            # Need to verify signature and hash and whatnot from this message.
-            # Implement simple protocol to ensure everything checks out.
-            # Signature needs to be verified from the client database
-            # 
-            # Verifying the digital signature
-            print("Verifying the digital signature...")
+            # 3. Verify signature of client AND integrity of the order.
+            if not verify_sign(hash_plaintext_Order, clientSignature, clientsPubKey):
+                sendMsg(clientSocket, "0::Signature is invalid. Order not processed.")
+                continue
 
-            pubKey = load_key(clientPubKey)
-            
-            result = verifyFieSig(clientOrder, pubKey, clientSignature)
+            print("Signature is valid and order data integrity verified. Proceed")
 
-            if result == True:
-                print("Success! Signature has been verified")
-            elif result == False:
-                print("Error! Signature has not been verified")
-            # 
-            #
-            ##################################################################
-            ##################################################################
-            ##################################################################
-            ##################################################################
-            ##################################################################
+            # 4. Signature and data integrity confirmed. Generate order.
+            order = Order(initString=plaintext_Order)
 
-            # Since the digital signature was legitamite, create order
-            order = Order(initString=clientOrder)
-
-            # Confirm order has a fresh timestamp.
+            # 5. Confirm order has a fresh timestamp.
             if datetime.utcnow().timestamp() - order._timeOrdered > TIMEOUT_WINDOW:
+                print("Timestamp invalid.")
                 sendMsg(clientSocket, "0::Order timeout. Please resubmit")
                 continue
             
-            # Confirm product availability
+            # 6. Confirm product availability
             available = getItemStock(order._description)
             if available == -1:
                 sendMsg(clientSocket, "0::Item does not exist in inventory")
                 continue
             elif available - order._quantity < 0:
                 sendMsg(clientSocket, ("0::Order exceeds available inventory. " + 
+                                        "There are only " + str(available) + " left. " +
                                         "Please modify or redo your order."))
                 continue
 
-            # Update the inventory to reflect the transaction.
+            # 7. Update the inventory to reflect the transaction.
             updateInventory(order._description, order._quantity)
             successMsg = "1::Order processed successfully."
+            print(successMsg.split("::")[1])
             
             # If server was started without an email password, do not send email
             if emailEnabled and sendMail(order, getUserEmail(clientUserName), clientUserName, sys.argv[5]):
@@ -333,6 +356,21 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
                 successMsg += "\n     However, email confirmation was unable to be sent"
 
             sendMsg(clientSocket, successMsg)
+
+        elif clientCommand == "inventory":
+            print("Client is checking product availability")
+            item = recvMsg(clientSocket)
+
+            available = getItemStock(item)
+            if available == -1:
+                sendMsg(clientSocket, "0::'" + item + "' does not exist in inventory")
+            else:
+                s = str("1::There " + 
+                        str("is " if available == 1 else "are ") + 
+                        str(available) + " " +
+                        item + str("'s " if available > 1 else " ") +
+                        "left in stock.")
+                sendMsg(clientSocket, s)
             
         elif clientCommand == "quit":
             # Quit protocol...
