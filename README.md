@@ -7,7 +7,10 @@ Reyniel Maglian: rrmaglian@csu.fullerton.edu
 
 # Overview
 
-To add.
+Secure Purchase Order is a Python based system that runs on a concurrent server. The system is a server/client model where you have a central server, the Order Processing Department (ODP), and n many clients it can serve at any given time. Those clients have a very specific purpose - to send orders to the server. When the server receives an order from a client, it ensures it has the required item in stock, and if so, processes the request and sends an order success email to the user. Throughout all of these server/client interactions there are necessary security precautions, ensuring data integrity, non-repudiation, authenticity, and confidentiality. <br>
+
+The main service that the OPD (the server) provides is the secure exchanging of customer(s) orders. The OPD has to receive both the secure digital signature and the order of the customer to verify its authenticity. Other services that our system provides is being able to use AES security to help secure and authenticate the order and digital signature that the user will create when creating an order. Another main important service that our system provides is sending an email confirmation that the order has been created and notifies the user along with a timestamp. <br>
+
 
 # Instructions
 
