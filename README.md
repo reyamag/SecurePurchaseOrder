@@ -64,6 +64,9 @@ Instructions Notes:<br>
      order:
           Sends an order request to the server
           
+     inventory:
+          Search for an item in the inventory
+          
      quit:
           Terminates the connection
           
