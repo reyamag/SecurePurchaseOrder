@@ -14,9 +14,17 @@ import smtplib
 # Server-wide variables
 bufferSize = 4096
 request_queue = 10
-serverName = ""
+
+if len(sys.argv) < 3:
+    print ("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> [<email_password>]")
+    exit(-1)
+serverName = sys.argv[1]
+serverPort = int(sys.argv[2])
+clientDB_file = "clientData.sl3"
+inventoryDB_file = "inventory.sl3"
 codingMethod = "UTF-8"
 GLOBAL_threads = []
+ALL_threads = []
 TIMEOUT_WINDOW = 20 # 20 seconds
 
 
@@ -77,7 +85,7 @@ def getDBPath(db_file):
 
 def retrievePasswordHash(userName):
 
-    clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
+    clientDB = sqlite3.connect(getDBPath(clientDB_file))
     cursor = clientDB.cursor()
     sqlStr = "SELECT Password_Hash FROM clients WHERE Client_Name='{}'".format(userName)
     result = cursor.execute(sqlStr).fetchone()
@@ -91,7 +99,7 @@ def updatePassword(userName, newPassword):
 
     result = False
 
-    clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
+    clientDB = sqlite3.connect(getDBPath(clientDB_file))
     cursor = clientDB.cursor()
     sqlStr = "UPDATE clients SET Password_Hash='{}' WHERE Client_Name='{}'".format(newPassword, userName)
     cursor.execute(sqlStr)
@@ -106,7 +114,7 @@ def updateInventory(item, amountOrdered):
     
     currentStock = getItemStock(item)
 
-    inventoryDB = sqlite3.connect(getDBPath(sys.argv[4]))
+    inventoryDB = sqlite3.connect(getDBPath(inventoryDB_file))
     cursor = inventoryDB.cursor()
     sqlStr = "UPDATE inventory SET InStock={} WHERE ItemDescription='{}'".format(currentStock-amountOrdered, item)
     cursor.execute(sqlStr)
@@ -118,7 +126,7 @@ def updateInventory(item, amountOrdered):
 
 def getItemStock(item):
 
-    inventoryDB = sqlite3.connect(getDBPath(sys.argv[4]))
+    inventoryDB = sqlite3.connect(getDBPath(inventoryDB_file))
     cursor = inventoryDB.cursor()
     sqlStr = "SELECT InStock FROM Inventory WHERE ItemDescription='{}'".format(item)
     result = cursor.execute(sqlStr).fetchone()
@@ -130,7 +138,7 @@ def getItemStock(item):
 
 def getClientPubKey(userName):
 
-    clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
+    clientDB = sqlite3.connect(getDBPath(clientDB_file))
     cursor = clientDB.cursor()
     sqlStr = "SELECT Public_Key FROM clients WHERE Client_Name='{}'".format(userName)
     result = cursor.execute(sqlStr).fetchone()
@@ -153,7 +161,7 @@ def getClientPubKey(userName):
 
 def getUserEmail(userName):
 
-    clientDB = sqlite3.connect(getDBPath(sys.argv[3]))
+    clientDB = sqlite3.connect(getDBPath(clientDB_file))
     cursor = clientDB.cursor()
     sqlStr = "SELECT Email FROM clients WHERE Client_Name='{}'".format(userName)
     result = cursor.execute(sqlStr).fetchone()
@@ -214,8 +222,13 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
 
     while not authenticated:
         print("Waiting for authentication....")
-        clientUserName = recvMsg(clientSocket)
-        clientPass = recvMsg(clientSocket)
+        try:
+            clientUserName = recvMsg(clientSocket)
+            clientPass = recvMsg(clientSocket)
+        except ValueError:
+            print("User terminated during credential authentication.")
+            clientSocket.close()
+            return
 
         # Hash input and compare to stored value for this client
         correctHash = retrievePasswordHash(clientUserName)
@@ -234,7 +247,14 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
     print("User successfully authenticated. Wait for command.")
 
     while True:
-        clientCommand = recvMsg(clientSocket)
+        clientCommand = ""
+        
+        try:
+            clientCommand = recvMsg(clientSocket)
+        except ValueError:
+            print("Incorrect message format from user. Exiting thread.")
+            clientSocket.close()
+            return
 
         args = clientCommand.split(" ")
 
@@ -373,7 +393,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             print(successMsg.split("::")[1])
             
             # If server was started without an email password, do not send email
-            if emailEnabled and sendMail(order, getUserEmail(clientUserName), clientUserName, sys.argv[5]):
+            if emailEnabled and sendMail(order, getUserEmail(clientUserName), clientUserName, sys.argv[3]):
                 successMsg += ("\n     Email confirmation sent successfully to: " +
                                 str(getUserEmail(clientUserName)))
             else:
@@ -414,20 +434,20 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
 # *******************************************************************
 def main():
 
-    if len(sys.argv) < 5 or len(sys.argv) > 6:
-        print ("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> <client_data> <inventory_dat> <email_password>")
+    if len(sys.argv) != 3 and len(sys.argv) != 4:
+        print ("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> [<email_password>]")
         return
-
-    serverName = sys.argv[1]
-    serverPort = int(sys.argv[2])
     
-    if sys.argv[3][-4:] != ".sl3" or not isfile(sys.argv[3]):
-        print("Please import a valid sqlite3 (.sl3 extension) database file for clients")
+    if not isfile(getDBPath('clientData.sl3')):
+        print("clientData.sl3 doesn't exist on server! Please create")
         return
 
-    if sys.argv[4][-4:] != ".sl3" or not isfile(sys.argv[4]):
-        print("Please import a valid sqlite3 (.sl3 extension) database file for inventory")
+    if not isfile(getDBPath('inventory.sl3')):
+        print("inventory.sl3 doesn't exist on server! Please create")
         return
+
+    if len(sys.argv) < 4:
+        print("WARNING: Email functionality not enabled due to no password input")
 
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -452,15 +472,22 @@ def main():
         print("\nAwaiting connection...")
 
         # Block until connection is received
-        (clientSocket, addr) = serverSocket.accept()
-        print("Connected with client", addr, "@", serverPort, "\n")
+        try:
+            (clientSocket, addr) = serverSocket.accept()
+            print("Connected with client", addr, "@", serverPort, "\n")
 
-        # Create a unique thread for this connection and continue listening
-        thrID = 1 if len(GLOBAL_threads) == 0 else getFirstAvailableThreadID()
-        GLOBAL_threads.append(thrID)
-        GLOBAL_threads.sort()
-        thread = serverThread(thrID, "Thread-" + str(thrID), thrID, serverSocket, serverPort, clientSocket, addr)
-        thread.start()
+            # Create a unique thread for this connection and continue listening
+            thrID = 1 if len(GLOBAL_threads) == 0 else getFirstAvailableThreadID()
+            GLOBAL_threads.append(thrID)
+            GLOBAL_threads.sort()
+            thread = serverThread(thrID, "Thread-" + str(thrID), thrID, serverSocket, serverPort, clientSocket, addr)
+            ALL_threads.append(thread)
+            thread.start()
+        except KeyboardInterrupt:
+            print("\rShutting off server.")
+            os._exit(0)
+        except ValueError:
+            print("Incorrect value from user. Keep listening.")
         
 
 
