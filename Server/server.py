@@ -83,7 +83,7 @@ def getDBPath(db_file):
     BASE_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
     return os.path.join(BASE_DIR, db_file)
 
-def retrievePasswordHash(userName):
+def getPasswordHash(userName):
 
     clientDB = sqlite3.connect(getDBPath(clientDB_file))
     cursor = clientDB.cursor()
@@ -121,6 +121,19 @@ def updateInventory(item, amountOrdered):
     inventoryDB.commit()
     cursor.close()
     inventoryDB.close()
+
+    return
+
+def createNewUser(username, passwordHash, email, publicKey):
+
+    clientDB = sqlite3.connect(getDBPath(clientDB_file))
+    cursor = clientDB.cursor()
+    sqlStr = "INSERT INTO clients (Client_Name, Password_Hash, Public_Key, Email) "
+    sqlStr += "VALUES ('{}', '{}', '{}', '{}')".format(username, passwordHash, publicKey, email)
+    cursor.execute(sqlStr)
+    clientDB.commit()
+    cursor.close()
+    clientDB.close()
 
     return
 
@@ -212,8 +225,38 @@ def sendMail(order, email_TO, recipientName, password):
     server.quit()
     return retVal
 
-
 def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
+
+    try:
+        newUserSetup = recvMsg(clientSocket)
+    
+        if newUserSetup == "1":
+            while True:
+                print("Prepare to receive user - must validate if already exists!")
+                newPotentialUser = recvMsg(clientSocket)
+                
+                # A retrieved password hash means this user exists!
+                if getPasswordHash(newPotentialUser) != "-1":
+                    print("Report that user exists")
+                    sendMsg(clientSocket, "0")
+                else:
+                    print("Report that user is unique")
+                    sendMsg(clientSocket, "1")
+                    break
+            
+            # Wait to receive more....
+            print("Wait to receive more...")
+            newUser = recvMsg(clientSocket)
+            newPasswordHash = recvMsg(clientSocket)
+            newEmail = recvMsg(clientSocket)
+            newPublicKey = recvMsg(clientSocket)
+
+            createNewUser(newUser, newPasswordHash, newEmail, newPublicKey)
+
+    except ValueError:
+        print("User terminated during new user setup phase")
+        clientSocket.close()
+        return
 
     # 1. Ensure correct client authentication...
     authenticated = False
@@ -231,7 +274,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             return
 
         # Hash input and compare to stored value for this client
-        correctHash = retrievePasswordHash(clientUserName)
+        correctHash = getPasswordHash(clientUserName)
         enteredHash = SHA512.new(clientPass.encode(codingMethod)).hexdigest()
 
         # Client Msg - "<Flag>::<Msg>", where <Msg> may be nothing or ErrorMsg
@@ -288,7 +331,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             # Receive current password from user, compare to database, and report success
             passwordFromUser = recvMsg(clientSocket)
 
-            if passwordFromUser == retrievePasswordHash(clientUserName):
+            if passwordFromUser == getPasswordHash(clientUserName):
                 # Notify user old password is correct. Wait for furthur input.
                 sendMsg(clientSocket, "1")
             else:

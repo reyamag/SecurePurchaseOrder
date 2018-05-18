@@ -13,6 +13,7 @@ import base64
 bufferSize = 4096
 serverName = ""
 codingMethod = "UTF-8"
+privKeyFile = ""
 idt = "    "  # Indent so that client feedback looks clean
 
 # Function to create a socket using a provided port # and server
@@ -27,19 +28,25 @@ def createSocket(portNum):
 	# Return the created socket
 	return connSock
 
+def formatRSAPublicKey(pubKeyPEM):
+    s = pubKeyPEM.decode()
+    s = s.replace("-----BEGIN PUBLIC KEY-----\n","")
+    s = s.replace("\n-----END PUBLIC KEY-----","")
+    s = s.replace("\n", "")
+    return s
 
 # *******************************************************************
 #							MAIN PROGRAM
 # *******************************************************************
 def main():
     # if client command line has 3 args. for ex: python client.py localhost 1234 privateKey.PEM
-    if len(sys.argv) != 4:
-        print("\tUSAGE: $python3 " + sys.argv[0] + " <server_machine> <server_port> <private_key_file>")
+    if len(sys.argv) != 3 and len(sys.argv) != 4:
+        print("\tUSAGE: $python3 " + sys.argv[0] + " <server_machine> <server_port> [<private_key_file>]")
         return 
     
     serverName = sys.argv[1]
     serverPort = int(sys.argv[2])
-    privKeyFile = sys.argv[3]
+    needsPrivKeyParam = True
 
     try:
         primarySocket = createSocket(serverPort)
@@ -54,42 +61,106 @@ def main():
             exists = input("Are you a returning user? (Y or N): ")
 
             if exists not in ['Y', 'y', 'N', 'n']:
-                print("Please enter Y or N")
+                print(idt, "Please enter Y or N")
                 continue
             
             if exists in ['Y', 'y']: # Go straight to login
+                sendMsg(primarySocket, "0")
                 break
+            else:
+                sendMsg(primarySocket, "1") # Notify server of new user setup
             
-            print("\nPlease enter the following information:")
-            new_userName = input("Username: ")
-            new_email = input("Email: ")
+            print("\nTo setup a new user, please enter the following information:")
+            usernameVerify = False
+            while not usernameVerify:
+                new_userName = input("Username: ")
+                if not new_userName.isalnum():
+                    print(idt, "Valid usernames must be alpha-numeric characters only. Try again.")
+                    continue
+                
+                # Send username to server to check for availability
+                sendMsg(primarySocket, new_userName)
+
+                response = recvMsg(primarySocket)
+                if response == "1":
+                    usernameVerify = True
+                else:
+                    print(idt, "Username already exists! Try another one.")
+            
+            emailVerify = False
+            while not emailVerify:
+                new_email = input("Email: ")
+                if "@" not in new_email:
+                    print(idt, "Please input a valid email.")
+                else:
+                    emailVerify = True
+
             passwordsVerify = False
             while not passwordsVerify:
                 new_password1 = getpass.getpass("Password: ")
                 new_password2 = getpass.getpass("Confirm Password: ")
                 if new_password1 != new_password2:
-                    print("Passwords don't match! Please retry")
-                    continue
+                    print(idt, "Passwords don't match! Please retry")
                 else:
                     passwordsVerify = True
             
             print("\nFinally, the server needs a public key to identify you by.")
-            publicKeyVerify = False
-            while not publicKeyVerify:
-                generate = input("Do you want the system to generate a public key for you? (Y or N): ")
-                if exists in ['Y', 'y']:
-                    print("Wonderful! You have been setup as a new user! Proceed to login")
-                    publicKeyVerify
-                
-                publicKey = input("Input the '.pem' file containing your public key: ")
-                if publicKey[-4:] != ".sl3" or not os.path.isfile(publicKey):
-                    print("Public key file is invalid.")
 
-            if publicKeyVerify and passwordsVerify:
+            newRSAKey = None
+            keyVerify = False
+            while not keyVerify:
+                generate = input("Do you want the system to generate a public/private key pair for you? (Y or N): ")
+                if generate in ['Y', 'y']:
+
+                    # Generate a new key
+                    newRSAKey = RSA.generate(1024)
+
+                    # Save the private key to file
+                    privKeyFile = str(new_userName + "_Private_Key.pem")
+                    f = open(privKeyFile, "wb")
+                    f.write(newRSAKey.exportKey('PEM'))
+                    f.close()
+                    needsPrivKeyParam = False
+
+                    # We have all the information we need. Send to server.
+                    keyVerify = True
+                    break
+                
+                _privateKeyFile = input("Please input the '.pem' file containing your private key: ")
+                if _privateKeyFile[-4:] != ".sl3" or not os.path.isfile(_privateKeyFile):
+                    print("Private key file is invalid. Try again.")
+                    continue
+                else:
+                    privKeyFile = _privateKeyFile
+                    # Load the key info
+                    newRSA = load_key(_privateKeyFile)
+
+                    # We have all the information we need. Send to server.
+                    keyVerify = True
+                    break
+
+            if passwordsVerify and keyVerify:
+                # Send all the information to the server now.
+                sendMsg(primarySocket, new_userName)
+                sendMsg(primarySocket, SHA512.new(new_password1.encode(codingMethod)).hexdigest())
+                sendMsg(primarySocket, new_email)
+                keyFormatted = formatRSAPublicKey(newRSAKey.publickey().exportKey('PEM'))
+                sendMsg(primarySocket, keyFormatted)
+
+                print("Wonderful! You have been setup as a new user! Proceed to login")
                 break
+            
     except KeyboardInterrupt:
         print()
         exit(0)
+
+    # The parameter is not needed when it was just created.
+    if needsPrivKeyParam:
+        if len(sys.argv) != 4:
+            print("Private key file necessary for use of purchasing system!")
+            print("USAGE: $python3 " + sys.argv[0] + " <server_machine> <server_port> [<private_key_file>]\n")
+        else:
+            privKeyFile = sys.argv[3]
 
     authenticated = False
     userName = ""
@@ -278,7 +349,7 @@ def main():
             exit(0)
         except KeyboardInterrupt:
             if authenticated:
-                print("\r\rPlease ensure use the 'quit' method instead of keyboard interrupt.")
+                print("\r\rPlease use the 'quit' method instead of keyboard interrupt.")
             else:
                 print()
                 primarySocket.close()
