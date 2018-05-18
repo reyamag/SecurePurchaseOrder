@@ -22,6 +22,7 @@ serverName = sys.argv[1]
 serverPort = int(sys.argv[2])
 clientDB_file = "clientData.sl3"
 inventoryDB_file = "inventory.sl3"
+serverPrivateKeyFile = "Server_Private_Key.pem"
 codingMethod = "UTF-8"
 GLOBAL_threads = []
 ALL_threads = []
@@ -374,36 +375,20 @@ def mainClientProcess(managingthread):
             outputLog("Received:", managingthread)
             clientSignature = recvMsg(clientSocket, decode=False)
             outputLog("\tClient Signature", managingthread)
-            aesKey = recvMsg(clientSocket, decode=False)
-            outputLog("\tAES key", managingthread)
-            iv = recvMsg(clientSocket, decode=False)
-            outputLog("\tAES IV Vector", managingthread)
+            aesKey_encrypted = recvMsg(clientSocket, decode=False)
+            outputLog("\tAES key (encrypted)", managingthread)
+            iv_encrypted = recvMsg(clientSocket, decode=False)
+            outputLog("\tAES IV Vector (encrypted)", managingthread)
             encryptedMsg = recvMsg(clientSocket, decode=False)
             outputLog("\tEncrypted message", managingthread)
 
 
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            # TODO: Decrypt AES & IV keys using RSA public key
+            # Decrypt the session key information w/ server's private key
+            serverPrivateKey = load_key(load_sig(serverPrivateKeyFile))
+            aesKey = serverPrivateKey.decrypt(aesKey_encrypted)
+            iv = serverPrivateKey.decrypt(iv_encrypted)
+            outputLog("Decryption of session keys successful", managingthread)
 
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
-            ###################################################################
 
             # 1. Decrypt the message using the AES key and IV vector.
             myDecryptor = AESCipher(aesKey, iv)

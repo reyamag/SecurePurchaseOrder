@@ -13,6 +13,7 @@ import base64
 # Client Global Variables
 bufferSize = 4096
 serverName = ""
+serverPublicKeyFile = "Server_Public_Key.pem"
 codingMethod = "UTF-8"
 privKeyFile = ""
 idt = "    "  # Indent so that client feedback looks clean
@@ -131,6 +132,8 @@ def main():
                     # Save the private key to file
                     privKeyFile = str(new_userName + "_Private_Key.pem")
                     save_sig(privKeyFile, newRSAKey.exportKey('PEM'))
+
+                    save_sig("Server_Public_Key.pem", newRSAKey.publickey().exportKey('PEM'))
                     
                     needsPrivKeyFileParam = False # We made the file here!
 
@@ -305,19 +308,27 @@ def main():
 
                 theOrder = Order(initList=[orderDesc, orderQty, int(float(datetime.utcnow().timestamp())), userName])
                 
-                # Get the private key from the input parameters
+                # Load the client's private key and server's public keys
                 privKey = load_key(load_sig(privKeyFile))
+                serverPublicKey = load_pub_key(serverPublicKeyFile)
 
                 # Get the signature of the order
                 orderSignature = getFileSig(str(theOrder), privKey, isFile=False)
                 
                 # Now, encrypt the order itself
-                # First, generate an AES key and initialization vector for block-chain encryption.
+                #
+                # Before we can do that ,we must firstg generate an AES key 
+                # and initialization vector for block-chain encryption.
                 aesKey = os.urandom(16) # 16 random bytes
                 iv = Random.new().read(AES.block_size) # Random IV
                 myEncryptor = AESCipher(aesKey, iv)
 
-                # Second, generate the encrypted text.
+                # Encrypt the AES session key and IV vector with server's public key for
+                # secure transmission across network
+                aesKey_encrypted = serverPublicKey.publickey().encrypt(aesKey, '')[0]
+                iv_encrypted = serverPublicKey.publickey().encrypt(iv, '')[0]
+
+                # Now, generate the encrypted text using the session key
                 encryptedOrder = myEncryptor.encrypt(str(theOrder))
 
                 # Send a sequence of messages in this order:
@@ -325,35 +336,11 @@ def main():
                 #   2. AES key
                 #   3. IV vector
                 #   4. Encrypted order
-                # Note: Messages 2-4 are byte-strings and cannot be encoded/decoded.
+                # Note: Messages 1-4 are byte-strings and cannot be encoded/decoded.
 
                 sendMsg(primarySocket, orderSignature, encode=False)
-
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                # TODO: Encrypt AES key & iv using RSA.
-
-                sendMsg(primarySocket, aesKey, encode=False)
-                sendMsg(primarySocket, iv, encode=False)
-
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
-                ###################################################################
+                sendMsg(primarySocket, aesKey_encrypted, encode=False)
+                sendMsg(primarySocket, iv_encrypted, encode=False)
                 sendMsg(primarySocket, encryptedOrder, encode=False)
 
                 print("Order sent to server. Waiting for reply.....")
