@@ -21,13 +21,22 @@ def readAndHash(source, isFile):
     # Compute SHA-512 hash on the contents
     return SHA512.new(contents.encode())
 
+def load_pub_key(keyFile):
+
+    publicRaw = open(keyFile, 'rb').read()
+
+    return RSA.importKey(publicRaw)
 
 # Loads an RSA key object
-def load_key(keyData):
+def load_key(keyData, isFile=False):
 
     rawKey = ""
 
-    rawKey = keyData
+    if isFile:
+        rawKey = open(keyData, 'rb').read()
+        # rawKey = b64decode(rawKey)
+    else:
+        rawKey = keyData
 
     #decodedKey = b64decode(rawKey)
     rsaKey = RSA.importKey(rawKey)
@@ -49,21 +58,13 @@ def sign_data(sigKey, data):
 def save_sig(fileName, signature):
 
     # Signature is b-64 encoded, so binary writing is needed
-    inFile = open(fileName, 'wb')
-    inFile.write(signature)
-    
-    inFile.close()
-
+    open(fileName, 'wb').write(signature)
 
 # Loads a signature from a file
 def load_sig(fileName):
 	
     # Signature is b-64 encoded, so binary reading is needed
-    inFile = open(fileName, "rb")
-    signature = inFile.read()
-    inFile.close()
-
-    return signature
+    return open(fileName, "rb").read()
 
 
 # Verifies a signature against a public key
