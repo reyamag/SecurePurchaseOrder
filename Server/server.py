@@ -16,7 +16,7 @@ bufferSize = 4096
 request_queue = 10
 
 if len(sys.argv) < 3:
-    print ("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> [<email_password>]")
+    print("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> [<email_password>]")
     exit(-1)
 serverName = sys.argv[1]
 serverPort = int(sys.argv[2])
@@ -66,9 +66,9 @@ class serverThread(threading.Thread):
 
     # Run the main thread process
     def run(self):
-        print("Starting " + self.name)
-        mainClientProcess(self.name, self.serverSocket, self.serverPort, self.clientSocket, self.addr)
-        print("Exiting " + self.name)
+        outputLog("Starting thread", self)
+        mainClientProcess(self)
+        outputLog("Exiting", self)
         self.stop() # Kill thread
         GLOBAL_threads.remove(self.threadID)
 
@@ -78,6 +78,17 @@ class serverThread(threading.Thread):
 
     def stopped(self):
         return self._stop_event.is_set()
+
+
+def outputLog(msg, thread=None):
+    rightNow = int(datetime.utcnow().timestamp())
+
+    if thread != None:
+        print(thread.name + ", " + str(rightNow) + " -- " + msg)
+    else:
+        print("ROOT, " + str(rightNow) + " -- " + msg)
+
+
 
 def getDBPath(db_file):
     BASE_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -171,7 +182,6 @@ def getClientPubKey(userName):
                 keyRaw[192:] + "\n" +
                 "-----END PUBLIC KEY-----")
 
-
 def getUserEmail(userName):
 
     clientDB = sqlite3.connect(getDBPath(clientDB_file))
@@ -186,7 +196,7 @@ def getUserEmail(userName):
 
 # Function source largly used from online example:
 # https://stackoverflow.com/questions/17332384/python-3-send-email-smtp-gmail-error-smtpexception
-def sendMail(order, email_TO, recipientName, password):
+def sendMail(order, email_TO, recipientName, password, thread):
 
     SUBJECT = "Order Confirmation from"
     TEXT = str("Hi " + recipientName + 
@@ -207,7 +217,7 @@ def sendMail(order, email_TO, recipientName, password):
         server.login(gmail_sender, password)
     except:
         server.quit()
-        print("Invalid credentials")
+        outputLog("Invalid credentials", thread)
         return False
 
     BODY = '\r\n'.join(['To: %s' % email_TO,
@@ -217,35 +227,37 @@ def sendMail(order, email_TO, recipientName, password):
     retVal = False
     try:
         server.sendmail(gmail_sender, [email_TO], BODY)
-        print("Email sent successfully")
+        outpuLog("Email sent successfully", thread)
         retVal = True
     except:
-        print("Issue sending email")
+        outputLog("Issue sending email", thread)
 
     server.quit()
     return retVal
 
-def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
+def mainClientProcess(managingthread):
+
+    clientSocket = managingthread.clientSocket
 
     try:
         newUserSetup = recvMsg(clientSocket)
     
         if newUserSetup == "1":
             while True:
-                print("Prepare to receive user - must validate if already exists!")
+                outputLog("Prepare to receive user - must validate if already exists!", managingthread)
                 newPotentialUser = recvMsg(clientSocket)
                 
                 # A retrieved password hash means this user exists!
                 if getPasswordHash(newPotentialUser) != "-1":
-                    print("Report that user exists")
+                    outputLog("Report that user exists", managingthread)
                     sendMsg(clientSocket, "0")
                 else:
-                    print("Report that user is unique")
+                    outputLog("Report that user is unique", managingthread)
                     sendMsg(clientSocket, "1")
                     break
             
             # Wait to receive more....
-            print("Wait to receive more...")
+            outputLog("Wait to receive more...", managingthread)
             newUser = recvMsg(clientSocket)
             newPasswordHash = recvMsg(clientSocket)
             newEmail = recvMsg(clientSocket)
@@ -254,7 +266,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             createNewUser(newUser, newPasswordHash, newEmail, newPublicKey)
 
     except ValueError:
-        print("User terminated during new user setup phase")
+        outputLog("User terminated during new user setup phase", managingthread)
         clientSocket.close()
         return
 
@@ -264,12 +276,12 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
     emailEnabled = (len(sys.argv) == 6) # Server was started with the email password
 
     while not authenticated:
-        print("Waiting for authentication....")
+        outputLog("Waiting for authentication....", managingthread)
         try:
             clientUserName = recvMsg(clientSocket)
             clientPass = recvMsg(clientSocket)
         except ValueError:
-            print("User terminated during credential authentication.")
+            outputLog("User terminated during credential authentication.", managingthread)
             clientSocket.close()
             return
 
@@ -285,9 +297,9 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             sendMsg(clientSocket, "0::User does not exist. Try again.")
         else:
             sendMsg(clientSocket, "0::Password is invalid. Try again.")
-            print("Credentials do not match. Report failure")
+            outputLog("Credentials do not match. Report failure", managingthread)
     
-    print("User successfully authenticated. Wait for command.")
+    outputLog("User successfully authenticated. Wait for command.", managingthread)
 
     while True:
         clientCommand = ""
@@ -295,14 +307,14 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
         try:
             clientCommand = recvMsg(clientSocket)
         except ValueError:
-            print("Incorrect message format from user. Exiting thread.")
+            outputLog("Incorrect message format from user. Exiting thread.", managingthread)
             clientSocket.close()
             return
 
         args = clientCommand.split(" ")
 
         if not clientCommand:
-            print("Client connection has unexpectedly terminated")
+            outputLog("Client connection has unexpectedly terminated", managingthread)
             break
 
         if clientCommand == "test":
@@ -312,10 +324,10 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             # Wait for another command.
 
             msg = recvMsg(clientSocket)
-            print("Received test message from client")
+            outputLog("Received test message from client", managingthread)
             sendMsg(clientSocket, "Test")
-            print("Sent test message to client")
-            print("Connection test successful")
+            outputLog("Sent test message to client", managingthread)
+            outputLog("Connection test successful", managingthread)
 
         elif clientCommand == "pwd":
             # pwd protocol...
@@ -326,7 +338,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             #   If message has 0 flag at msg start, wait for another command.
             # Send update success message to user
 
-            print("Client wants to update password")
+            outputLog("Client wants to update password", managingthread)
 
             # Receive current password from user, compare to database, and report success
             passwordFromUser = recvMsg(clientSocket)
@@ -335,7 +347,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
                 # Notify user old password is correct. Wait for furthur input.
                 sendMsg(clientSocket, "1")
             else:
-                print("Passwords do not match")
+                outputLog("Passwords do not match", managingthread)
                 sendMsg(clientSocket, "0")
                 continue # Wait for a new command since this one 'failed'
 
@@ -343,14 +355,14 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             parsedMsg = clientMsg.split("::")
 
             if parsedMsg[0] == "1":
-                print("Updating password.")
+                outputLog("Updating password.", managingthread)
                 if updatePassword(clientUserName, parsedMsg[1]):
                     sendMsg(clientSocket, "1")
                 else:
                     sendMsg(clientSocket, "0")
-                    print("Password update unsucessful. Report to client")
+                    outputLog("Password update unsucessful. Report to client", managingthread)
             else:
-                print("Client terminated 'pwd' command")
+                outputLog("Client terminated 'pwd' command", managingthread)
 
         elif clientCommand == "order":
             # Order protocol...
@@ -358,16 +370,16 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             # Sends response message to client
             #   Response contains success 1\0 flag at beginning of message
 
-            print("Client wants to order")
-            print("Received:")
+            outputLog("Client wants to order", managingthread)
+            outputLog("Received:", managingthread)
             clientSignature = recvMsg(clientSocket, decode=False)
-            print("\tClient Signature")
+            outputLog("\tClient Signature", managingthread)
             aesKey = recvMsg(clientSocket, decode=False)
-            print("\tAES key")
+            outputLog("\tAES key", managingthread)
             iv = recvMsg(clientSocket, decode=False)
-            print("\tAES IV Vector")
+            outputLog("\tAES IV Vector", managingthread)
             encryptedMsg = recvMsg(clientSocket, decode=False)
-            print("\tEncrypted message")
+            outputLog("\tEncrypted message", managingthread)
 
 
             ###################################################################
@@ -400,7 +412,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             # 2. Generate the hash of the data sent.
             hash_plaintext_Order = readAndHash(plaintext_Order, isFile=False)
 
-            print("Verifying signature with public key against hash...")
+            outputLog("Verifying signature with public key against hash...", managingthread)
             clientsPubKey = load_key(getClientPubKey(clientUserName))
             
             # 3. Verify signature of client AND integrity of the order.
@@ -408,14 +420,14 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
                 sendMsg(clientSocket, "0::Signature is invalid. Order not processed.")
                 continue
 
-            print("Signature is valid and order data integrity verified. Proceed")
+            outputLog("Signature is valid and order data integrity verified. Proceed", managingthread)
 
             # 4. Signature and data integrity confirmed. Generate order.
             order = Order(initString=plaintext_Order)
 
             # 5. Confirm order has a fresh timestamp.
             if datetime.utcnow().timestamp() - order._timeOrdered > TIMEOUT_WINDOW:
-                print("Timestamp invalid.")
+                outputLog("Timestamp invalid.", managingthread)
                 sendMsg(clientSocket, "0::Order timeout. Please resubmit")
                 continue
             
@@ -433,10 +445,10 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             # 7. Update the inventory to reflect the transaction.
             updateInventory(order._description, order._quantity)
             successMsg = "1::Order processed successfully."
-            print(successMsg.split("::")[1])
+            outputLog(successMsg.split("::")[1])
             
             # If server was started without an email password, do not send email
-            if emailEnabled and sendMail(order, getUserEmail(clientUserName), clientUserName, sys.argv[3]):
+            if emailEnabled and sendMail(order, getUserEmail(clientUserName), clientUserName, sys.argv[3], managingthread):
                 successMsg += ("\n     Email confirmation sent successfully to: " +
                                 str(getUserEmail(clientUserName)))
             else:
@@ -445,7 +457,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             sendMsg(clientSocket, successMsg)
 
         elif clientCommand == "inventory":
-            print("Client is checking product availability")
+            outputLog("Client is checking product availability", managingthread)
             item = recvMsg(clientSocket)
 
             available = getItemStock(item)
@@ -464,11 +476,11 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
             # No messages to send/receive
             # Close connection with client and exit
 
-            print("Quit command received. Closing socket now")
+            outputLog("Quit command received. Closing socket now", managingthread)
             clientSocket.close()
             break
         else:
-            print("Not a valid command")
+            outputLog("Not a valid command", managingthread)
 
 
 
@@ -478,7 +490,7 @@ def mainClientProcess(threadName, serverSocket, serverPort, clientSocket, addr):
 def main():
 
     if len(sys.argv) != 3 and len(sys.argv) != 4:
-        print ("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> [<email_password>]")
+        print("\tUSAGE: $python3 " + sys.argv[0] + " <server_name> <port_number> [<email_password>]")
         return
     
     if not isfile(getDBPath('clientData.sl3')):
@@ -494,30 +506,30 @@ def main():
 
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    print("Socket created")
+    outputLog("Socket created")
 
     # bind socket to host and port
     try:
         serverSocket.bind((serverName, serverPort))
     except socket.error as msg:
-        print("Bind failed. Error Code:", str(msg))
+        outputLog("Bind failed. Error Code:", str(msg))
 
         serverSocket.close()
         return
 
-    print("Socket bind complete")
+    outputLog("Socket bind complete")
 
     serverSocket.listen(request_queue)
-    print("Socket now listening")
+    outputLog("Socket now listening")
 
     # Listen forever
     while True:
-        print("\nAwaiting connection...")
+        outputLog("Awaiting connection...")
 
         # Block until connection is received
         try:
             (clientSocket, addr) = serverSocket.accept()
-            print("Connected with client", addr, "@", serverPort, "\n")
+            outputLog(str("Connected with client ") + str(addr) + " @ " + str(serverPort))
 
             # Create a unique thread for this connection and continue listening
             thrID = 1 if len(GLOBAL_threads) == 0 else getFirstAvailableThreadID()
@@ -527,10 +539,10 @@ def main():
             ALL_threads.append(thread)
             thread.start()
         except KeyboardInterrupt:
-            print("\rShutting off server.")
+            outputLog("\rShutting off server.")
             os._exit(0)
         except ValueError:
-            print("Incorrect value from user. Keep listening.")
+            outputLog("Incorrect value from user. Keep listening.")
         
 
 
